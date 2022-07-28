@@ -1,0 +1,8 @@
+{
+  "name": "numfury",
+  "version": "1.0.0",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^4.7.4"
+  }
+}
