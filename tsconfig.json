@@ -3,7 +3,8 @@
         "target": "ESNext",
         "module": "CommonJS",
         "moduleResolution": "node",
-        "outDir": "lib"
+        "outDir": "lib",
+        "declaration": true
     },
     "include": ["src"]
 }
