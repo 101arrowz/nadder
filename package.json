@@ -1,8 +1,16 @@
 {
   "name": "nadder",
   "version": "1.0.0",
-  "license": "MIT",
+  "description": "ndarray/tensor data processing for modern browsers",
+  "main": "lib/index.js",
+  "module": "esm/index.js",
+  "types": "lib/index.d.ts",
+  "author": "Arjun Barrett",
+  "scripts": {
+    "build": "tsc && tsc -p tsconfig.esm.json"
+  },
   "devDependencies": {
     "typescript": "^4.7.4"
-  }
+  },
+  "license": "MIT"
 }

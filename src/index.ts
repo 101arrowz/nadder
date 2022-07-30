@@ -1,6 +1,7 @@
 export enum DataType {
   Int8,
   Uint8,
+  Uint8Clamped,
   Int16,
   Uint16,
   Int32,
@@ -10,12 +11,14 @@ export enum DataType {
   Float32,
   Float64,
   Bool,
-  String
+  String,
+  Object
 }
 
 const dataTypeBufferMap = {
   [DataType.Int8]: Int8Array,
   [DataType.Uint8]: Uint8Array,
+  [DataType.Uint8Clamped]: Uint8ClampedArray,
   [DataType.Int16]: Int16Array,
   [DataType.Uint16]: Uint16Array,
   [DataType.Int32]: Int32Array,
@@ -25,7 +28,8 @@ const dataTypeBufferMap = {
   [DataType.Float32]: Float32Array,
   [DataType.Float64]: Float64Array,
   [DataType.Bool]: Array as { new(length: number): boolean[] },
-  [DataType.String]: Array as { new(length: number): string[] }
+  [DataType.String]: Array as { new(length: number): string[] },
+  [DataType.Object]: Array as { new(length: number): unknown[] }
 };
 
 type DataTypeTypeMap = typeof dataTypeBufferMap;
@@ -38,11 +42,10 @@ const findType = <T extends DataType>(data: DataTypeBuffer<T>): T => {
       throw new TypeError('cannot infer type from empty array');
     }
     const expect = typeof data[0];
-    if (data.some(d => typeof d != expect)) {
-      throw new TypeError('array contains mixed types');
-    }
+    if (data.some(d => typeof d != expect)) return DataType.Object as T;
     if (expect == 'string') return DataType.String as T;
     if (expect == 'boolean') return DataType.Bool as T;
+    return DataType.Object as T;
   }
   for (const key in dataTypeBufferMap) {
     if (data instanceof dataTypeBufferMap[key]) {
@@ -55,19 +58,16 @@ export type Dims = readonly number[];
 
 type IndexType<T extends DataType> = DataTypeBuffer<T>[number];
 
-class RawTensor<T extends DataType, D extends Dims> {
+class RawTensor<T extends DataType> {
   // type
   t: T;
   // buffer
   b: DataTypeBuffer<T>;
-  // dimensions
-  d: D;
 
-  constructor(data: DataTypeBuffer<T>, dimensions: D);
-  constructor(type: T, dimensions: D);
-  constructor(dataOrType: T | DataTypeBuffer<T>, dimensions: D);
-  constructor(dataOrType: T | DataTypeBuffer<T>, dimensions: D) {
-    const size = dimensions.reduce((a, b) => a * b, 1);
+  constructor(data: DataTypeBuffer<T>);
+  constructor(type: T, size: number);
+  constructor(dataOrType: T | DataTypeBuffer<T>, size?: number);
+  constructor(dataOrType: T | DataTypeBuffer<T>, size?: number) {
     if (typeof dataOrType == 'number') {
       this.t = dataOrType;
       this.b = new dataTypeBufferMap[this.t](size) as DataTypeBuffer<T>;
@@ -76,155 +76,173 @@ class RawTensor<T extends DataType, D extends Dims> {
     } else {
       this.t = findType(dataOrType);
       this.b = dataOrType;
-      if (this.b.length != size) {
-        throw new TypeError(`expected buffer of length ${size}, found ${this.b.length}`);
-      }
     }
-    this.d = dimensions;
   }
 }
 
-const tvInternals = Symbol('tensorview-internals');
-const inspect = Symbol.for('nodejs.util.inspect.custom');
+const tvInternals = Symbol('tensorviewinternals');
 
-interface TensorView<T extends DataType, D extends Dims> {
-  [index: number]: D extends readonly [number, ...infer NextD]
+const rangeSize = (s: number, e: number, t: number) => Math.floor(Math[t > 0 ? 'max' : 'min'](e - s, 0) / t);
+
+const fixInd = (ind: number, size: number, loose?: 1) => {
+  if (!Number.isInteger(ind) || (!loose && (ind < -size || ind >= size))) {
+    throw new RangeError(`index ${ind} out of bounds in dimension of length ${size}`);
+  }
+  return ind < 0 ? ind + size : ind;
+}
+
+type TensorViewChild<T extends DataType, D extends Dims> =
+  D extends readonly [number, ...infer NextD]
     ? [] extends NextD
       ? IndexType<T>
       : TensorView<T, NextD extends Dims ? NextD : never>
-    :  IndexType<T> | TensorView<T, readonly number[]>;
+    : IndexType<T> | TensorView<T, Dims>;
+
+interface TensorView<T extends DataType, D extends Dims> extends Iterable<TensorViewChild<T, D>> {
+  [index: number]: TensorViewChild<T, D>;
+  [index: string]: IndexType<T> | TensorView<T, Dims>;
 }
 class TensorView<T extends DataType, D extends Dims> {
   // proxy bypass
   private [tvInternals]: this;
-  // tensor/view
-  private t: RawTensor<T, Dims> | TensorView<T, Dims>;
-  // index
-  private i: number;
+  // tensor
+  private t: RawTensor<T>;
   // dimensions
   private d: Dims;
+  // stride
+  private s: number[];
+  // offset
+  private o: number;
 
-  constructor(src: TensorView<T, Dims> | RawTensor<T, Dims>, index = -1) {
-    this.i = index;
+  constructor(src: RawTensor<T>, dims: Dims, stride: number[], offset: number) {
     this.t = src;
-    this.d = (src as TensorView<T, Dims>).d.slice(index == -1 ? 0 : 1);
-    
+    this.d = dims;
+    this.s = stride;
+    this.o = offset;
+
     return new Proxy(this, {
       get: (target, key) => {
         if (key == tvInternals) return target;
         if (typeof key == 'symbol') return;
-        let ind = +key;
-        ind = target.v(ind);
-        return target.g(ind);
+        const parts = key.split(',').map(part => part.trim().split(':'));
+        let nextDims = dims.slice();
+        let nextStride = stride.slice();
+        let nextOffset = offset;
+        let workingIndex = 0;
+        for (let i = 0; i < parts.length; ++i) {
+          if (workingIndex >= nextDims.length) {
+            throw new TypeError('cannot slice 0-D tensor');
+          }
+          const part = parts[i];
+          if (part.length == 1) {
+            if (part[0] == '...') {
+              if (parts.slice(i + 1).some(part => part.length == 1 && part[0] == '...')) {
+                throw new TypeError('only one ellipsis allowed in index')
+              }
+              workingIndex = nextDims.length - (parts.length - i - 1);
+              continue;
+            } else if (part[0] == '+') {
+              nextDims.splice(workingIndex, 0, 1);
+              nextStride.splice(workingIndex, 0, nextStride[workingIndex++]);
+              continue;
+            }
+            let ind = +part[0];
+            ind = fixInd(ind, nextDims.splice(workingIndex, 1)[0]);
+            nextOffset += ind * nextStride.splice(workingIndex, 1)[0]
+          } else if (part.length > 3) {
+            throw new TypeError(`invalid slice ${key}`);
+          } else {
+            let step = +(part[2] || 1);
+            if (step == 0 || !Number.isInteger(step)) {
+              throw new TypeError(`invalid step ${step}`);
+            }
+            const t = step || 1;
+            let start = +(part[0] || (step < 0 ? nextDims[workingIndex] - 1 : 0));
+            const s = fixInd(start, nextDims[workingIndex], 1);
+            const e = part[1]
+              ? fixInd(+part[1], nextDims[workingIndex], 1)
+              : (step < 0 ? -1 : nextDims[workingIndex]);
+            nextOffset += s * nextStride[workingIndex];
+            nextDims[workingIndex] = rangeSize(s, e, t);
+            nextStride[workingIndex++] *= t;
+          }
+        }
+        if (!nextDims.length) return src.b[nextOffset];
+        return new TensorView<T, Dims>(src, nextDims, nextStride, nextOffset);
       },
-      set: (target, key, value) => {
-        const ind = target.v(+(key as string));
-        target.s(ind, value);
+      set: (target, key, value, receiver) => {
+        receiver[key][tvInternals].set(value);
         return true;
       }
     });
   }
 
-  // validate index
-  private v(ind: number) {
-    if (ind < -this.d[0] || ind >= this.d[0] || !Number.isInteger(ind)) {
-      throw new TypeError(`invalid index ${ind} into dimension of size ${this.d[0]}`);
-    }
-    if (ind < 0) ind += this.d[0];
-    return ind;
+  private c(ind: number[]) {
+    let offset = this.o;
+    for (let i = 0; i < ind.length; ++i) offset += ind[i] * this.s[i];
+    return offset;
   }
 
-  // get 
-  private g(ind: number): IndexType<T> | TensorView<T, Dims> {
-    if (this.d.length == 1) {
-      const path = this.c();
-      return path.t.b[path.b + ind];
-    }
-    return new TensorView<T, Dims>(this, ind);
-  }
-
-  // set
-  private s(ind: number, value: unknown) {
-    const path = this.c();
+  set(value: TensorView<T, D>) {
     if (!value[tvInternals]) {
-      const raw = new RawTensor<T, Dims>(path.t.t, []);
-      raw.b[0] = value as never;
-      value = new TensorView(raw);
+      const buf = new dataTypeBufferMap[this.t.t](1) as DataTypeBuffer<T>;
+      buf[0] = value;
+      value = new TensorView(new RawTensor(buf), this.d, this.d.map(() => 0), 0);
     }
-    const tv = (value as TensorView<T, Dims>)[tvInternals];
-    if (tv.d.length != this.d.length - 1 || tv.d.some((d, i) => d != this.d[i + 1])) {
-      throw new TypeError(`invalid tensor dimensions (${tv.d.join(', ')}); expected (${this.d.slice(1).join(', ')})`);
+    const tv = value[tvInternals];
+    if (tv.t.t != this.t.t) {
+      throw new TypeError('cannot set to tensor of different type');
     }
-    const src = tv.c();
-    if (path.t.t != src.t.t) {
-      throw new TypeError(`incompatible types: ${DataType[path.t.t]} != ${DataType[src.t.t]}`);
+    if (tv.d.length != this.d.length || tv.d.some((v, i) => this.d[i] != v)) {
+      throw new TypeError(`incompatible dimensions: expected (${this.d.join(', ')}), found (${tv.d.join(', ')})`);
     }
-    if (!tv.d.length) {
-      path.t.b[path.b + ind] = src.t.b[src.b];
-      return;
-    }
-    const pi = path.b + ind;
-    const setDims = (offSrc: number, offDst: number, dims: Dims) => {
-      const [dim, ...newDims] = dims;
-      const baseSrc = offSrc * dim, baseDst = offDst * dim;
-      if (!newDims.length) {
-        if ((path.t.b as Uint8Array).set) {
-          (path.t.b as Uint8Array).set((src.t.b as Uint8Array).subarray(baseSrc, baseSrc + dim), baseDst);
-        } else {
-          for (let i = 0; i < dim; ++i) {
-            path.t.b[baseDst + i] = src.t.b[baseSrc + i];
-          }
-        }
+    const set = (coord: number[]) => {
+      if (coord.length == this.d.length) {
+        this.t.b[this.c(coord)] = tv.t.b[tv.c(coord)];
+      } else if (coord.length == this.d.length - 1 && this.s[coord.length] == 1 && tv.s[coord.length] == 1) {
+        const start = coord.concat(0);
+        const srcStart = tv.c(start);
+        (this.t.b as Uint8Array).set((tv.t.b as Uint8Array).subarray(srcStart, srcStart + this.d[coord.length]), this.c(start));
       } else {
-        for (let i = 0; i < dim; ++i) {
-          setDims(baseSrc + i, baseDst + i, newDims);
-        }
+        for (let i = 0; i < this.d[coord.length]; ++i) set(coord.concat(i));
       }
     }
-    setDims(src.b / tv.d[0], pi, tv.d);
-  }
-
-  // calculate index
-  private c(): { b: number; t: RawTensor<T, Dims> } {
-    if (typeof (this.t as RawTensor<T, D>).t == 'number') {
-      return {
-        b: 0,
-        t: this.t as RawTensor<T, Dims>
-      };
-    }
-    const path = (this.t as TensorView<T, Dims>).c();
-    return {
-      b: (path.b + this.i) * this.d[0],
-      t: path.t
-    };
-  }
-
-  private r() {
-    let str = '[';
-    for (let i = 0; i < this.d[0]; ++i) {
-      const val = this.g(i);
-      str += (this.d.length > 1 ? (val as TensorView<T, Dims>)[tvInternals].r() : JSON.stringify(val)) + ', ';
-    }
-    return str.slice(0, -2) + ']';
+    set([]);
   }
 
   toString() {
-    if (!this.d.length) return this.g(0).toString();
-    let str = `Tensor<${DataType[this.c().t.t]}>(${this.d.join(', ')}) [`;
-    for (let i = 0; i < this.d[0]; ++i) {
-      const val = this.g(i);
-      str += `${(this.d.length > 1 ? (val as TensorView<T, Dims>)[tvInternals].r() : JSON.stringify(val))}, `;
+    const stringify = (coord: number[]) => {
+      if (coord.length == this.d.length) return this.t.b[this.c(coord)].toString();
+      let str = '[';
+      for (let i = 0; i < this.d[coord.length]; ++i) {
+        str += stringify(coord.concat(i)) + ', ';
+      }
+      return str.slice(0, -2) + ']';
     }
-    return str.slice(0, -2) + ']';
+    return `Tensor<${DataType[this.t.t]}>(${this.d.join(', ')}) ${stringify([])}`
   }
 
-  [inspect]() {
-    return this[tvInternals].toString();
+  *[Symbol.iterator]() {
+    if (this.d.length == 1) {
+      for (let i = 0; i < this.d[0]; ++i) {
+        yield this.t.b[this.o + i * this.s[0]] as TensorViewChild<T, D>;
+      }
+    } else {
+      const nextDims = this.d.slice(1), nextStride = this.s.slice(1);
+      for (let i = 0; i < this.d[0]; ++i) {
+        yield new TensorView<T, Dims>(this.t, nextDims, nextStride, this.o + i * this.s[0]) as TensorViewChild<T, D>;
+      }
+    }
+  }
+
+  private [Symbol.for('nodejs.util.inspect.custom')]() {
+    return (this[tvInternals] || this).toString();
   }
 
   get shape(): D {
     return this.d.slice() as unknown as D;
   }
+
   get size(): number {
     return this.d.reduce((a, b) => a * b, 1);
   }
@@ -244,6 +262,12 @@ export function tensor<D extends Dims>(data: boolean[], dimensions: D): TensorVi
 export function tensor<D extends Dims>(data: string[], dimensions: D): TensorView<DataType.String, D>;
 export function tensor<T extends DataType, D extends Dims>(dataOrType: T | DataTypeBuffer<T>, dimensions: D): TensorView<T, D>;
 export function tensor<T extends DataType, D extends Dims>(dataOrType: T | DataTypeBuffer<T>, dimensions: D) {
-  const src = new RawTensor(dataOrType, dimensions);
-  return new TensorView<T, D>(src);
+  const src = new RawTensor(dataOrType, dimensions.reduce((a, b) => a * b, 1));
+  const stride: number[] = [];
+  let cur = 1;
+  for (let i = dimensions.length - 1; i >= 0; --i) {
+    stride.unshift(cur);
+    cur *= dimensions[i];
+  }
+  return new TensorView<T, D>(src, dimensions, stride, 0);
 }
