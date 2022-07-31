@@ -14,9 +14,9 @@ export class Bitset {
       get: (target, name) => {
         if (typeof name == 'symbol') return target[name];
         const ind = +name;
-        if (name != 'NaN' && !isNaN(ind)) return target[name];
+        if (name != 'NaN' && isNaN(ind)) return target[name];
         if (!Number.isInteger(ind) || ind < 0 || ind > size) return;
-        return (target.b[ind >> 3] & (1 << (ind & 7))) == 1;
+        return (target.b[ind >> 3] & (1 << (ind & 7))) > 0;
       },
       set: (target, name, value) => {
         if (typeof name != 'symbol') {
@@ -40,20 +40,21 @@ export class Bitset {
     const out = new Array<boolean>(this.b.length << 3);
     for (let i = 0; i < this.b.length; ++i) {
       const ind = i << 3;
-      out[ind] = (this.b[i] & 128) == 128;
-      out[ind + 1] = (this.b[i] & 64) == 64;
-      out[ind + 2] = (this.b[i] & 32) == 32;
-      out[ind + 3] = (this.b[i] & 16) == 16;
-      out[ind + 4] = (this.b[i] & 8) == 8;
-      out[ind + 5] = (this.b[i] & 4) == 4;
-      out[ind + 6] = (this.b[i] & 2) == 2;
-      out[ind + 7] = (this.b[i] & 1) == 1;
+
+      out[ind] = (this.b[i] & 1) > 0;
+      out[ind + 1] = (this.b[i] & 2) > 0;
+      out[ind + 2] = (this.b[i] & 4) > 0;
+      out[ind + 3] = (this.b[i] & 8) > 0;
+      out[ind + 4] = (this.b[i] & 16) > 0;
+      out[ind + 5] = (this.b[i] & 32) > 0;
+      out[ind + 6] = (this.b[i] & 64) > 0;
+      out[ind + 7] = (this.b[i] & 128) > 0;
     }
     out.length = this.length;
     return out;
   }
 
-  static from(src: boolean[]) {
+  static fromArray(src: boolean[]) {
     const bs = new Bitset(src.length);
     for (let i = 0; i < bs.b.length; ++i) {
       const ind = i << 3;

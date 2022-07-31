@@ -174,20 +174,44 @@ class NDView<T extends DataType, D extends Dims> {
       let nextOffset = offset;
       let workingIndex = 0;
       for (let i = 0; i < parts.length; ++i) {
-        if (workingIndex >= nextDims.length) {
-          throw new TypeError('cannot slice 0-D ndarray');
-        }
         const part = parts[i];
+        if (workingIndex >= nextDims.length && (part.length > 1 || part[0] != '+')) {
+          throw new TypeError('cannot slice 0-D ndarray');
+       }
         if (part.length == 1) {
           if (part[0] == '...') {
-            if (parts.slice(i + 1).some(part => part.length == 1 && part[0] == '...')) {
-              throw new TypeError('only one ellipsis allowed in index')
+            // TODO: improve this block (lots of repeated code)
+            workingIndex = nextDims.length;
+            for (let j = i + 1; j < parts.length; ++j) {
+              const newPart = parts[j];
+              if (newPart.length == 1) {
+                if (newPart[0] == '...') {
+                  throw new TypeError('only one ellipsis allowed in index');
+                } else if (newPart[0].startsWith(indexablePrefix)) {
+                  let ind = indexablePrefix.length;
+                  for (; ind < part[0].length; ++ind) {
+                    if (part[0][ind] != zws) break;
+                  }
+                  const id = ind - indexablePrefix.length;
+                  const view = recentAccesses.get(id);
+                  if (view) {
+                    if (view.t.t <= DataType.Uint32) workingIndex -= 1;
+                    else if (view.t.t == DataType.Bool) workingIndex -= view.d.length;
+                    else {
+                      throw new TypeError(`cannot index ndarray with ndarray of type ${DataType[view.t.t]}`);
+                    }
+                  } else {
+                    throw new TypeError(`cannot index ndarray with ndarray of type ${DataType[view.t.t]}`);
+                  }
+                }
+              } else workingIndex -= 1;
             }
-            workingIndex = nextDims.length - (parts.length - i - 1);
             continue;
+
           } else if (part[0] == '+') {
             nextDims.splice(workingIndex, 0, 1);
-            nextStride.splice(workingIndex, 0, nextStride[workingIndex++]);
+            nextStride.splice(workingIndex, 0, 0);
+            workingIndex++;
             continue;
           } else if (part[0].startsWith(indexablePrefix)) {
             let i = indexablePrefix.length;
@@ -195,24 +219,37 @@ class NDView<T extends DataType, D extends Dims> {
               if (part[0][i] != zws) break;
             }
             const id = i - indexablePrefix.length;
-            let view = recentAccesses.get(id);
+            const view = recentAccesses.get(id);
             if (view) {
+              recentAccesses.delete(id);
               if (view.t.t <= DataType.Uint32) {
-                const tmpView = ndarray(nextSrc.t, view.d.concat(nextDims));
+                const tmpView = ndarray(nextSrc.t, view.d.concat(nextDims.slice(workingIndex)));
 
               } else if (view.t.t == DataType.Bool) {
-                view = this.y(view);
-                const newSrc = new FlatArray(nextSrc.t, nextDims.reduce((a, b) => a * b, 1));
-                let length = 0;
-                for (const ind of target.r()) {
+                const preDims = nextDims.slice(0, workingIndex);
+                const workingDims = nextDims.slice(workingIndex);
+                if (view.d.length != workingDims.length || view.d.some((v, i) => workingDims[i] != v)) {
+                  throw new TypeError(`incompatible dimensions: expected (${workingDims.join(', ')}), found (${view.d.join(', ')})`);
+                }
+                const trueOffsets: number[] = [];
+                for (const ind of view.r()) {
                   if (view.t.b[view.c(ind)]) {
-                    newSrc.t[length++] = nextSrc.t[this.c(ind)];
+                    let offset = nextOffset;
+                    for (let i = 0; i < workingDims.length; ++i) offset += ind[i] * nextStride[workingIndex + i];
+                    trueOffsets.push(offset);
                   }
                 }
-                nextSrc = newSrc;
-                nextDims = [length];
-                nextStride = [1];
-                nextOffset = 0;
+                const tmpView = ndarray(nextSrc.t, [...preDims, trueOffsets.length]);
+                for (const ind of tmpView.r()) {
+                  let offset = trueOffsets[ind[workingIndex]];
+                  for (let i = 0; i < workingIndex; ++i) offset += ind[i] * nextStride[i];
+                  tmpView.t.b[tmpView.c(ind)] = nextSrc.b[offset];
+                }
+                nextSrc = tmpView.t;
+                // tmpView no longer needed, so can be mutable
+                nextDims = tmpView.d as number[];
+                nextStride = tmpView.s;
+                nextOffset = tmpView.o;
                 workingIndex = nextDims.length;
               } else {
                 throw new TypeError(`cannot index ndarray with ndarray of type ${DataType[view.t.t]}`);
@@ -381,7 +418,21 @@ class NDView<T extends DataType, D extends Dims> {
     const id = getFreeID();
     recentAccesses.set(id, this);
     queueMicrotask(() => recentAccesses.delete(id));
-    return `${indexablePrefix}${zws.repeat(id)}<${DataType[this.t.t]}>(${this.d.join(', ')}) [...]`;
+    return `${indexablePrefix}${zws.repeat(id)}<${DataType[this.t.t]}>(${this.d.join('x')}) [...]`;
+  }
+
+  reshape(dims: Dims) {
+    if (dims.reduce((a, b) => a * b, 1) != this.size) {
+      throw new TypeError(`dimensions (${dims.join(', ')}) do not match data length ${this.size}`);
+    }
+    const cd: number[] = [], cs: number[] = [];
+    for (let i = 0; i < this.d.length; ++i) {
+      if (this.d[i] != 1) {
+        cd.push(this.d[i]);
+        cs.push(this.s[i]);
+      }
+    }
+    
   }
 
   get shape(): D {
