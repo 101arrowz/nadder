@@ -44,3 +44,7 @@ console.log(t[`..., ${boolIndex}`])
 
 ### Limitations
 - No direct Fortran (column-major) memory layout support
+
+
+## License
+MIT

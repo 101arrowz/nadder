@@ -19,22 +19,6 @@ type NDViewChild<T extends DataType, D extends Dims> =
     : IndexType<T> | NDView<T, Dims>;
 
 
-const numOps = [
-  ['add', 'add', (a: number, b: number) => a + b],
-  ['subtract', 'sub', (a: number, b: number) => a - b],
-  ['multiply', 'mul', (a: number, b: number) => a * b],
-  ['divide', 'div', (a: number, b: number) => a / b],
-  ['modulo', 'mod', (a: number, b: number) => a % b],
-  ['exponentiate', 'pow', (a: number, b: number) => a ** b],
-  ['bitwise and', 'bitAnd', (a: number, b: number) => a & b],
-  ['bitwise or', 'bitOr', (a: number, b: number) => a | b],
-  ['bitwise xor', 'bitXor', (a: number, b: number) => a ^ b],
-] as const;
-
-type NumOps = {
-  [T in (typeof numOps)[number][1]]: <T extends DataType, D extends Dims>(this: NDView<T, D>, value: NDView<T, D>, inPlace?: boolean) => NDView<T, D>;
-}
-
 // zero width space - we'll use it for some fun hacks :P
 const zws = String.fromCharCode(0x200B);
 
@@ -48,21 +32,21 @@ const getFreeID = () => {
 
 const indexablePrefix = `ndarray${zws}`
 
-interface NDView<T extends DataType, D extends Dims> extends Iterable<NDViewChild<T, D>>, NumOps {
+export interface NDView<T extends DataType = DataType, D extends Dims = Dims> extends Iterable<NDViewChild<T, D>> {
   [index: number]: NDViewChild<T, D>;
   [index: string]: IndexType<T> | NDView<T, Dims>;
 }
-class NDView<T extends DataType, D extends Dims> {
+export class NDView<T extends DataType, D extends Dims> {
   // raw ndarray
   private t: FlatArray<T>;
   // dimensions
-  private d: Dims;
+  private d: D;
   // stride
   private s: number[];
   // offset
   private o: number;
 
-  constructor(src: FlatArray<T>, dims: Dims, stride: number[], offset: number) {
+  constructor(src: FlatArray<T>, dims: D, stride: number[], offset: number) {
     this.t = src;
     this.d = dims;
     this.s = stride;
@@ -149,8 +133,7 @@ class NDView<T extends DataType, D extends Dims> {
                   tmpView.t.b[tmpView.c(ind)] = nextSrc.b[offset];
                 }
                 nextSrc = tmpView.t;
-                // tmpView no longer needed, so can be mutable
-                nextDims = tmpView.d as number[];
+                nextDims = tmpView.d;
                 nextStride = tmpView.s;
                 nextOffset = tmpView.o;
                 workingIndex = nextDims.length;
@@ -285,33 +268,33 @@ class NDView<T extends DataType, D extends Dims> {
     return `ndarray<${DataType[this.t.t]}>(${this.d.join(', ')}) ${stringify(0)}`
   }
 
-  static {
-    const numOp = (opName: string, name: string, op: (a: number, b: number) => void) => {
-      NDView.prototype[name] = function<T extends DataType, D extends Dims>(this: NDView<T, D>, value: NDView<T, D> | IndexType<T>, inPlace?: boolean) {
-        if (this.t.t >= DataType.Bool) throw new TypeError(`cannot ${opName} non-numeric ndarrays`);
-        const val = this.y(value, inPlace);
-        if (inPlace) {
-          for (const index of this.r()) {
-            const ind = this.c(index);
-            this.t.b[ind] = op(this.t.b[ind] as number, val.t.b[val.c(index)] as number);
-          }
-          return this;
-        } else {
-          let type: DataType = this.t.t;
-          if (!isAssignable(type, val.t.t)) {
-            type = val.t.t;
-            if (!isAssignable(type, this.t.t)) type = DataType.Float32;
-          }
-          const dst = ndarray(type, this.d);
-          for (const index of this.r()) {
-            dst.t.b[dst.c(index)] = op(this.t.b[this.c(index)] as number, val.t.b[val.c(index)] as number);
-          }
-          return dst;
-        }
-      };
-    }
-    for (const op of numOps) numOp.apply(null, op);
-  }
+  // static {
+  //   const numOp = (opName: string, name: string, op: (a: number, b: number) => void) => {
+  //     NDView.prototype[name] = function<T extends DataType, D extends Dims>(this: NDView<T, D>, value: NDView<T, D> | IndexType<T>, inPlace?: boolean) {
+  //       if (this.t.t >= DataType.Bool) throw new TypeError(`cannot ${opName} non-numeric ndarrays`);
+  //       const val = this.y(value, inPlace);
+  //       if (inPlace) {
+  //         for (const index of this.r()) {
+  //           const ind = this.c(index);
+  //           this.t.b[ind] = op(this.t.b[ind] as number, val.t.b[val.c(index)] as number);
+  //         }
+  //         return this;
+  //       } else {
+  //         let type: DataType = this.t.t;
+  //         if (!isAssignable(type, val.t.t)) {
+  //           type = val.t.t;
+  //           if (!isAssignable(type, this.t.t)) type = DataType.Float32;
+  //         }
+  //         const dst = ndarray(type, this.d);
+  //         for (const index of this.r()) {
+  //           dst.t.b[dst.c(index)] = op(this.t.b[this.c(index)] as number, val.t.b[val.c(index)] as number);
+  //         }
+  //         return dst;
+  //       }
+  //     };
+  //   }
+  //   for (const op of numOps) numOp.apply(null, op);
+  // }
 
   private [Symbol.for('nodejs.util.inspect.custom')]() {
     return this.toString();
