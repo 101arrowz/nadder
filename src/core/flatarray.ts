@@ -1,6 +1,10 @@
 import { DataType, DataTypeBuffer, dataTypeBufferMap } from './datatype';
 
 const findType = <T extends DataType>(data: DataTypeBuffer<T>): T => {
+  if (Array.isArray(data)) {
+    if (data.length > 0 && data.every(d => typeof d == 'string')) return DataType.String as T;
+    return DataType.Object as T;
+  }
   for (const key in dataTypeBufferMap) {
     if (data instanceof dataTypeBufferMap[key]) {
       return +key as T;

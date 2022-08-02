@@ -7,7 +7,7 @@
   "types": "lib/index.d.ts",
   "author": "Arjun Barrett",
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json"
+    "build": "tsc && tsc -p tsconfig.esm.json && node scripts/postbuild"
   },
   "devDependencies": {
     "typescript": "^4.7.4"

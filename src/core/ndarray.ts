@@ -1,4 +1,4 @@
-import { DataType, DataTypeBuffer, dataTypeBufferMap, IndexType, isAssignable } from './datatype';
+import { DataType, DataTypeBuffer, dataTypeNames, dataTypeBufferMap, IndexType, isAssignable } from './datatype';
 import { FlatArray } from './flatarray';
 import { Bitset, ComplexArray } from '../util';
 
@@ -85,10 +85,10 @@ export class NDView<T extends DataType, D extends Dims> {
                     if (view.t.t <= DataType.Uint32) workingIndex -= 1;
                     else if (view.t.t == DataType.Bool) workingIndex -= view.d.length;
                     else {
-                      throw new TypeError(`cannot index ndarray with ndarray of type ${DataType[view.t.t]}`);
+                      throw new TypeError(`cannot index ndarray with ndarray of type ${dataTypeNames[view.t.t]}`);
                     }
                   } else {
-                    throw new TypeError(`cannot index ndarray with ndarray of type ${DataType[view.t.t]}`);
+                    throw new TypeError(`cannot index ndarray with ndarray of type ${dataTypeNames[view.t.t]}`);
                   }
                 }
               } else workingIndex -= 1;
@@ -138,7 +138,7 @@ export class NDView<T extends DataType, D extends Dims> {
                 nextOffset = tmpView.o;
                 workingIndex = nextDims.length;
               } else {
-                throw new TypeError(`cannot index ndarray with ndarray of type ${DataType[view.t.t]}`);
+                throw new TypeError(`cannot index ndarray with ndarray of type ${dataTypeNames[view.t.t]}`);
               }
               continue;
             }
@@ -199,7 +199,7 @@ export class NDView<T extends DataType, D extends Dims> {
     }
     const val = value as NDView<T, D>;
     if (strict && !isAssignable(this.t.t, val.t.t)) {
-      throw new TypeError(`cannot assign to ndarray of type ${DataType[val.t.t]} to ${DataType[this.t.t]}`);
+      throw new TypeError(`cannot assign to ndarray of type ${dataTypeNames[val.t.t]} to ${dataTypeNames[this.t.t]}`);
     }
     if (val.d.length != this.d.length || val.d.some((v, i) => this.d[i] != v)) {
       throw new TypeError(`incompatible dimensions: expected (${this.d.join(', ')}), found (${val.d.join(', ')})`);
@@ -265,7 +265,7 @@ export class NDView<T extends DataType, D extends Dims> {
       }
       return str.slice(0, -2) + ']';
     }
-    return `ndarray<${DataType[this.t.t]}>(${this.d.join(', ')}) ${stringify(0)}`
+    return `ndarray<${dataTypeNames[this.t.t]}>(${this.d.join(', ')}) ${stringify(0)}`
   }
 
   // static {
@@ -304,7 +304,7 @@ export class NDView<T extends DataType, D extends Dims> {
     const id = getFreeID();
     recentAccesses.set(id, this);
     queueMicrotask(() => recentAccesses.delete(id));
-    return `${indexablePrefix}${zws.repeat(id)}<${DataType[this.t.t]}>(${this.d.join('x')}) [...]`;
+    return `${indexablePrefix}${zws.repeat(id)}<${dataTypeNames[this.t.t]}>(${this.d.join('x')}) [...]`;
   }
 
   reshape(dims: Dims) {
@@ -327,6 +327,10 @@ export class NDView<T extends DataType, D extends Dims> {
 
   get size(): number {
     return this.d.reduce((a, b) => a * b, 1);
+  }
+
+  get dtype(): DataType {
+    return this.t.t;
   }
 }
 

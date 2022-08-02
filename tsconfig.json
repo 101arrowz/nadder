@@ -4,6 +4,7 @@
         "module": "CommonJS",
         "moduleResolution": "node",
         "outDir": "lib",
+        "preserveConstEnums": true,
         "declaration": true
     },
     "include": ["src"]
