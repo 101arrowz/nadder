@@ -9,11 +9,11 @@ export class ComplexArray {
   // size
   readonly length: number;
 
-  constructor(size: number, double?: boolean);
+  constructor(size: number, float?: boolean);
   constructor(interleaved: Float32Array | Float64Array);
-  constructor(sizeOrBuf: number | Float32Array | Float64Array, double?: boolean) {
+  constructor(sizeOrBuf: number | Float32Array | Float64Array, float?: boolean) {
     if (typeof sizeOrBuf == 'number') {
-      this.b = new (double ? Float64Array : Float32Array)(sizeOrBuf << 1);
+      this.b = new (float ? Float32Array : Float64Array)(sizeOrBuf << 1);
     } else {
       this.b = sizeOrBuf;
       if (this.b.length & 1) {

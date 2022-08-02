@@ -18,23 +18,23 @@ export const enum DataType {
   Any = 16384,
 }
 
-export const dataTypeNames = [
-  'int8',
-  'uint8',
-  'uint8-clamped',
-  'int16',
-  'uint16',
-  'int32',
-  'uint32',
-  'float32',
-  'float64',
-  'complex',
-  'bool',
-  'string',
-  'int64',
-  'uint64',
-  'any'
-];
+export const dataTypeNames = {
+  [DataType.Int8]: 'int8',
+  [DataType.Uint8]: 'uint8',
+  [DataType.Uint8Clamped]: 'uint8-clamped',
+  [DataType.Int16]: 'int16',
+  [DataType.Uint16]: 'uint16',
+  [DataType.Int32]: 'int32',
+  [DataType.Uint32]: 'uint32',
+  [DataType.Float32]: 'float32',
+  [DataType.Float64]: 'float64',
+  [DataType.Complex]: 'complex',
+  [DataType.Bool]: 'bool',
+  [DataType.String]: 'string',
+  [DataType.Int64]: 'int64',
+  [DataType.Uint64]: 'uint64',
+  [DataType.Any]: 'any'
+};
 
 export type IntType = 
   | DataType.Int8

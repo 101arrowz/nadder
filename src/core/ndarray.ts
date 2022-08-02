@@ -1,6 +1,6 @@
-import { DataType, DataTypeBuffer, dataTypeNames, dataTypeBufferMap, IndexType, isAssignable } from './datatype';
+import { DataType, DataTypeBuffer, dataTypeNames, dataTypeBufferMap, IndexType, isAssignable, bestGuess, guessType } from './datatype';
 import { FlatArray } from './flatarray';
-import { Bitset, ComplexArray, StringArray } from '../util';
+import { Bitset, Complex, ComplexArray, StringArray } from '../util';
 
 export type Dims = readonly number[];
 
@@ -12,11 +12,13 @@ const fixInd = (ind: number, size: number, loose?: 1) => {
 }
 
 type NDViewChild<T extends DataType, D extends Dims> =
-  D extends readonly [number, ...infer NextD]
-    ? [] extends NextD
-      ? IndexType<T>
-      : NDView<T, NextD extends Dims ? NextD : never>
-    : IndexType<T> | NDView<T, Dims>;
+  D extends readonly []
+    ? never
+    : D extends readonly [number, ...infer NextD]
+      ? [] extends NextD
+        ? IndexType<T>
+        : NDView<T, NextD extends Dims ? NextD : never>
+      : IndexType<T> | NDView<T, Dims>;
 
 
 // zero width space - we'll use it for some fun hacks :P
@@ -62,9 +64,6 @@ export class NDView<T extends DataType, D extends Dims> {
       let workingIndex = 0;
       for (let i = 0; i < parts.length; ++i) {
         const part = parts[i];
-        if (workingIndex >= nextDims.length && (part.length > 1 || part[0] != '+')) {
-          throw new TypeError('cannot slice 0-D ndarray');
-       }
         if (part.length == 1) {
           if (part[0] == '...') {
             // TODO: improve this block (lots of repeated code)
@@ -94,13 +93,13 @@ export class NDView<T extends DataType, D extends Dims> {
               } else workingIndex -= 1;
             }
             continue;
-
           } else if (part[0] == '+') {
             nextDims.splice(workingIndex, 0, 1);
             nextStride.splice(workingIndex, 0, 0);
             workingIndex++;
             continue;
           } else if (part[0].startsWith(indexablePrefix)) {
+            if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0-D ndarray');
             let i = indexablePrefix.length;
             for (; i < part[0].length; ++i) {
               if (part[0][i] != zws) break;
@@ -146,11 +145,13 @@ export class NDView<T extends DataType, D extends Dims> {
           }
           let ind = +part[0];
           if (parts.length == 1 && isNaN(ind)) return target[key];
+          if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0-D ndarray');
           ind = fixInd(ind, nextDims.splice(workingIndex, 1)[0]);
           nextOffset += ind * nextStride.splice(workingIndex, 1)[0]
         } else if (part.length > 3) {
           throw new TypeError(`invalid slice ${key}`);
         } else {
+          if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0-D ndarray');
           let step = +(part[2] || 1);
           if (step == 0 || !Number.isInteger(step)) {
             throw new TypeError(`invalid step ${step}`);
@@ -222,6 +223,7 @@ export class NDView<T extends DataType, D extends Dims> {
   }
 
   *[Symbol.iterator]() {
+    if (!this.d.length) throw new TypeError('cannot iterate over scalar');
     if (this.d.length == 1) {
       for (let i = 0; i < this.d[0]; ++i) {
         yield this.t.b[this.o + i * this.s[0]] as NDViewChild<T, D>;
@@ -363,4 +365,35 @@ export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | Data
     cur *= dimensions[i];
   }
   return new NDView<T, D>(src, dimensions, stride, 0);
+}
+
+type RecursiveArray<T> = T | RecursiveArray<T>[];
+
+
+const recurseFind = (data: RecursiveArray<unknown>): [number[], unknown[], DataType] => {
+  if (Array.isArray(data)) {
+    if (data.length == 0) return [[0], [], DataType.Any];
+    const results = data.map(recurseFind);
+    const newType = bestGuess(results.map(([,,t]) => t));
+    if (results.some(([dim]) => dim.length != results[0][0].length || dim.some((v, i) => results[0][0][i] != v))) {
+      throw new TypeError('jagged ndarrays are not supported');
+    }
+    return [[data.length, ...results[0][0]], results.flatMap(([,b]) => b), newType];
+  }
+  return [[], [data], guessType(data)];
+}
+
+export function array(data: RecursiveArray<number>): NDView<DataType.Int32 | DataType.Float64>;
+export function array(data: RecursiveArray<bigint>): NDView<DataType.Int64>;
+export function array(data: RecursiveArray<string>): NDView<DataType.String>;
+export function array(data: RecursiveArray<boolean>): NDView<DataType.Bool>;
+export function array(data: RecursiveArray<Complex>): NDView<DataType.Complex>;
+export function array(data: RecursiveArray<unknown>): NDView<DataType.Any>;
+export function array(data: RecursiveArray<unknown>): NDView<DataType> {
+  const [dims, flat, type] = recurseFind(data);
+  const arr = ndarray(type, dims);
+  for (let i = 0; i < flat.length; ++i) {
+    arr['t'].b[i] = flat[i];
+  }
+  return arr;
 }

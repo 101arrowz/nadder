@@ -9,8 +9,9 @@ export function broadcast<T extends DataType[]>(...views: Broadcastable<T>) {
   let maxDims = 0;
   const allInfo = views.map(v => {
     if (!(v instanceof NDView)) {
-      v = ndarray(guessType(v), []);
-      (v as NDView)['t'].b[0] = v;
+      const nd = ndarray(guessType(v), []);
+      nd['t'].b[0] = v;
+      v = nd;
     }
     if (v['d'].length > maxDims) maxDims = v['d'].length;
     return {
