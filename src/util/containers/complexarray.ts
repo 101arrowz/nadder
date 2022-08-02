@@ -28,16 +28,16 @@ export class ComplexArray {
         if (name != 'NaN' && isNaN(ind)) return target[name];
         if (!Number.isInteger(ind) || ind < 0 || ind > size) return;
         return wrap({
-          get re() {
+          get real() {
             return target.b[ind << 1];
           },
-          set re(val: number) {
+          set real(val: number) {
             target.b[ind << 1] = val;
           },
-          get im() {
+          get imag() {
             return target.b[(ind << 1) + 1];
           },
-          set im(val: number) {
+          set imag(val: number) {
             target.b[(ind << 1) + 1] = val;
           }
         });
@@ -46,9 +46,16 @@ export class ComplexArray {
         if (typeof name != 'symbol') {
           const ind = +name;
           if (name == 'NaN' || !isNaN(ind)) {
-            if (Number.isInteger(ind) && ind >= 0 || ind < size) {
-              target.b[ind << 1] = value.re;
-              target.b[(ind << 1) + 1] = value.im;
+            if (Number.isInteger(ind) && ind >= 0 && ind < size) {
+              if (!value || typeof value.real != 'number' || typeof value.imag != 'number') {
+                const real = +value;
+                if (isNaN(real)) {
+                  throw new TypeError('only complex and real numbers can be added to a complex array');
+                }
+                value = { real, imag: 0 };
+              }
+              target.b[ind << 1] = value.real;
+              target.b[(ind << 1) + 1] = value.imag;
             }
             return true;
           }
@@ -65,8 +72,8 @@ export class ComplexArray {
       throw new RangeError(`index ${ind} out of range for complex array of length ${this.length}`);
     }
     return wrap({
-      re: this.b[ind << 1],
-      im: this.b[(ind << 1) + 1]
+      real: this.b[ind << 1],
+      imag: this.b[(ind << 1) + 1]
     });
   }
 
@@ -74,8 +81,8 @@ export class ComplexArray {
     const out = new Array<Complex>(this.length);
     for (let i = 0; i < out.length; ++i) {
       out[i] = wrap({
-        re: this.b[i << 1],
-        im: this.b[(i << 1) + 1]
+        real: this.b[i << 1],
+        imag: this.b[(i << 1) + 1]
       });
     }
     return out;
@@ -84,8 +91,8 @@ export class ComplexArray {
   static fromArray(src: Complex[]) {
     const bs = new ComplexArray(src.length);
     for (let i = 0; i < src.length; ++i) {
-      bs.b[i << 1] = src[i].re;
-      bs.b[(i << 1) + 1] = src[i].im;
+      bs.b[i << 1] = src[i].real;
+      bs.b[(i << 1) + 1] = src[i].imag;
     }
     return bs;
   }

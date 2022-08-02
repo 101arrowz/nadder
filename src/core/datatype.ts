@@ -1,4 +1,4 @@
-import { Bitset, ComplexArray } from '../util';
+import { Bitset, ComplexArray, StringArray } from '../util';
 
 export const enum DataType {
   Int8 = 1,
@@ -15,7 +15,7 @@ export const enum DataType {
   String = 2048,
   Int64 = 4096,
   Uint64 = 8192,
-  Object = 16384,
+  Any = 16384,
 }
 
 export const dataTypeNames = [
@@ -33,13 +33,12 @@ export const dataTypeNames = [
   'string',
   'int64',
   'uint64',
-  'object'
+  'any'
 ];
 
 export type IntType = 
   | DataType.Int8
   | DataType.Uint8
-  | DataType.Uint8Clamped
   | DataType.Int16
   | DataType.Uint16
   | DataType.Int32
@@ -55,14 +54,14 @@ export type BigNumericType = DataType.Int64 | DataType.Uint64;
 
 export type AssignableType<T extends DataType> = T extends NumericType
   ? NumericType | DataType.Bool | DataType.String
-  : T extends DataType.Object | DataType.String | DataType.Bool
+  : T extends DataType.Any | DataType.String | DataType.Bool
     ? DataType
     : T extends BigNumericType
       ? BigNumericType
       : never;
 
 export function isAssignable<T1 extends DataType>(dst: T1, src: DataType): src is AssignableType<T1> {
-  if (dst == src || dst == DataType.Object || dst == DataType.String || dst == DataType.Bool) return true;
+  if (dst == src || dst == DataType.Any || dst == DataType.String || dst == DataType.Bool) return true;
   if (dst == DataType.Int64 || dst == DataType.Uint64) return src == DataType.Int64 || src == DataType.Uint64;
   if (dst <= DataType.Float64) return src <= DataType.String;
   return false;
@@ -76,7 +75,21 @@ export function guessType(value: unknown) {
   if (typeof value == 'string') return DataType.String;
   if (typeof value == 'boolean') return DataType.Bool;
   if (value && typeof value['re'] == 'number' && typeof value['im'] == 'number') return DataType.Complex;
-  return DataType.Object;
+  return DataType.Any;
+}
+
+// should only be called on return values from guessType for accurate result
+export function bestGuess(types: DataType[]) {
+  if (types.length < 2) return types[0] || DataType.Float64;
+  let maxType = types[0];
+  if (maxType >= DataType.Bool) return types.every(v => v == maxType) ? maxType : DataType.Any;
+  for (const type of types) {
+    if (type > maxType) {
+      if (type >= DataType.Bool) return DataType.Any;
+      maxType = type;
+    }
+  }
+  return maxType;
 }
 
 export const dataTypeBufferMap = {
@@ -91,10 +104,10 @@ export const dataTypeBufferMap = {
   [DataType.Float64]: Float64Array,
   [DataType.Complex]: ComplexArray,
   [DataType.Bool]: Bitset,
-  [DataType.String]: Array as { new(length: number): string[] },
+  [DataType.String]: StringArray,
   [DataType.Int64]: BigInt64Array,
   [DataType.Uint64]: BigUint64Array,
-  [DataType.Object]: Array as { new(length: number): unknown[] }
+  [DataType.Any]: Array as { new(length: number): unknown[] }
 };
 
 export type DataTypeBuffer<T extends DataType> = InstanceType<(typeof dataTypeBufferMap)[T]>

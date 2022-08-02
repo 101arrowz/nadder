@@ -1,6 +1,6 @@
 import { DataType, DataTypeBuffer, dataTypeNames, dataTypeBufferMap, IndexType, isAssignable } from './datatype';
 import { FlatArray } from './flatarray';
-import { Bitset, ComplexArray } from '../util';
+import { Bitset, ComplexArray, StringArray } from '../util';
 
 export type Dims = readonly number[];
 
@@ -344,10 +344,11 @@ export function ndarray<D extends Dims>(data: Uint32Array, dimensions: D): NDVie
 export function ndarray<D extends Dims>(data: Float32Array, dimensions: D): NDView<DataType.Float32, D>;
 export function ndarray<D extends Dims>(data: Float64Array, dimensions: D): NDView<DataType.Float64, D>;
 export function ndarray<D extends Dims>(data: ComplexArray, dimensions: D): NDView<DataType.Complex, D>;
+export function ndarray<D extends Dims>(data: Bitset, dimensions: D): NDView<DataType.Bool, D>;
+export function ndarray<D extends Dims>(data: StringArray, dimensions: D): NDView<DataType.String, D>;
 export function ndarray<D extends Dims>(data: BigInt64Array, dimensions: D): NDView<DataType.Int64, D>;
 export function ndarray<D extends Dims>(data: BigUint64Array, dimensions: D): NDView<DataType.Uint64, D>;
-export function ndarray<D extends Dims>(data: Bitset, dimensions: D): NDView<DataType.Bool, D>;
-export function ndarray<D extends Dims>(data: unknown[], dimensions: D): NDView<DataType.Object, D>;
+export function ndarray<D extends Dims>(data: unknown[], dimensions: D): NDView<DataType.Any, D>;
 export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | DataTypeBuffer<T>, dimensions: D): NDView<T, D>;
 export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | DataTypeBuffer<T>, dimensions: D) {
   const size = dimensions.reduce((a, b) => a * b, 1);

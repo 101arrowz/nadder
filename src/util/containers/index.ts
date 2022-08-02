@@ -1,2 +1,3 @@
 export * from './bitset';
-export * from './complex';
+export * from './complexarray';
+export * from './stringarray';

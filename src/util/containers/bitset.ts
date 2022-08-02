@@ -22,7 +22,7 @@ export class Bitset {
         if (typeof name != 'symbol') {
           const ind = +name;
           if (name == 'NaN' || !isNaN(ind)) {
-            if (Number.isInteger(ind) && ind >= 0 || ind < size) {
+            if (Number.isInteger(ind) && ind >= 0 && ind < size) {
               const bit = (1 << (ind & 7));
               if (value) target.b[ind >> 3] |= bit;
               else target.b[ind >> 3] &= ~bit;
