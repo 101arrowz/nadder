@@ -18,7 +18,7 @@ type UfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataTyp
   out?: UfuncReturnType<TR, TF, D>;
   where?: NDView<DataType.Bool, D> | boolean;
   dtype?: TF;
-};
+} | UfuncReturnType<TR, TF, D>;
 type UfuncArgs<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =  [...args: ({ [I in keyof T]: NDView<T[I][number], D> | AnyDataType<T[I]> }), opts: UfuncOpts<T, TR, TF, D> | void];
 type UfuncSig<T> = T extends OpImpl<infer T, infer TR> ? (<D extends Dims, TF extends DataType>(...args: UfuncArgs<T, TR, TF, D>) => UfuncReturnType<TR, TF, D>) : never;
 type UnionToIntersection<U> =  (U extends unknown ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
@@ -34,18 +34,20 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
   // assertion: nin > 0, nout > 0, impls.every(([args, result, impl]) => args.length == nin && result.length == nout)
   return ((...args: UfuncArgs<MultiTypeArgs, MultiType, DataType, Dims>) => {
     if (args.length > nin + 1 || args.length < nin) throw new TypeError(`${name} takes ${nin} arguments and optional arguments; got ${args.length} arguments`);
-    let { where = true, out, dtype } = (args.length > nin ? args.pop() : {}) as UfuncOpts<MultiTypeArgs, MultiType, DataType, Dims>;
-    const [proxyWhere, ...inputs] = broadcast(where, ...(args as NDView[]));
-    const ndWhere = proxyWhere[ndvInternals];
+    let opts = (args.length > nin ? args.pop() : {}) as UfuncOpts<MultiTypeArgs, MultiType, DataType, Dims>;
+    if (nout > 1 ? Array.isArray(opts) && opts.every(o => o[ndvInternals]) : opts[ndvInternals]) {
+      opts = { out: opts as NDView };
+    }
+    let { where = true, out, dtype } = opts;
+    const [ndWhere, ...inputs] = broadcast(where, ...(args as NDView[]));
     if (ndWhere['t'].t != DataType.Bool) throw new TypeError(`${name} expects where to be a boolean ndarray`);
-    const fastInputs = inputs.map(input => input[ndvInternals]);
-    const possibleImpls = fastImpls.filter(([ins]) => ins.every((mask, i) => mask & fastInputs[i]['t'].t));
+    const possibleImpls = fastImpls.filter(([ins]) => ins.every((mask, i) => mask & inputs[i]['t'].t));
     if (!possibleImpls.length) throw new TypeError(`${name} is not implemented for the given arguments`);
     const chosenImpl = dtype
       ? possibleImpls.find(([_, outs]) => outs.every(t => t == dtype)) || possibleImpls[0]
       : (dtype = possibleImpls[0][1][0], possibleImpls[0]);
     const [ins, outs, impl] = chosenImpl;
-    const dims = fastInputs[0]['d'];
+    const dims = inputs[0]['d'];
     if (nout > 1) {
       if (out) {
         if (!Array.isArray(out) || out.length != nout) {
@@ -70,7 +72,7 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
       const call = (dim: number) => {
         if (dim == dims.length) {
           if (ndWhere['t'].b[ndWhere['c'](coord)]) {
-            const values = fastInputs.map(input => input['t'].b[input['c'](coord)]);
+            const values = inputs.map(input => input['t'].b[input['c'](coord)]);
             const result = impl(...values);
             for (let i = 0; i < nout; ++i) {
               assign[i]['t'].b[assign[i]['c'](coord)] = result[i];
@@ -98,7 +100,7 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
       } else out = ndarray(dtype, dims);
       const assign = out[ndvInternals];
       if (nin == 2) {
-        const [in0, in1] = fastInputs;
+        const [in0, in1] = inputs;
         const callWhere = (dim: number, ind0: number, ind1: number, outInd: number, whereInd: number) => {
           if (dim == dims.length) {
             if (ndWhere['t'].b[whereInd]) {
@@ -128,7 +130,7 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
         };
         (where === true ? call : callWhere)(0, in0['o'], in1['o'], assign['o'], ndWhere['o']);
       } else if (nin == 1) {
-        const [input] = fastInputs;
+        const [input] = inputs;
         const callWhere = (dim: number, ind: number, outInd: number, whereInd: number) => {
           if (dim == dims.length) {
             if (ndWhere['t'].b[whereInd]) {
@@ -161,7 +163,7 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
         const call = (dim: number) => {
           if (dim == dims.length) {
             if (ndWhere['t'].b[ndWhere['c'](coord)]) {
-              const values = fastInputs.map(input => input['t'].b[input['c'](coord)]);
+              const values = inputs.map(input => input['t'].b[input['c'](coord)]);
               assign['t'].b[assign['c'](coord)] = impl(...values);
             }
           } else {

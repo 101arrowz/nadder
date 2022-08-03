@@ -1,6 +1,6 @@
-import { DataType, DataTypeBuffer, dataTypeNames, dataTypeBufferMap, IndexType, isAssignable, bestGuess, guessType } from './datatype';
+import { DataType, DataTypeBuffer, dataTypeNames, dataTypeBufferMap, IndexType, isAssignable, bestGuess, guessType, AssignableType } from './datatype';
 import { FlatArray } from './flatarray';
-import { Bitset, Complex, ComplexArray, StringArray, ndvInternals } from '../util';
+import { Bitset, Complex, ComplexArray, StringArray, ndvInternals, broadcast } from '../util';
 
 export type Dims = readonly number[];
 
@@ -162,6 +162,7 @@ export class NDView<T extends DataType, D extends Dims> {
             }
             throw new TypeError('ndarray index expired: ensure slices are used immediately after creation');
           }
+          if (!part[0]) throw new TypeError('invalid syntax (empty slice)');
           let ind = +part[0];
           if (parts.length == 1 && isNaN(ind)) return target[key];
           if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0-D ndarray');
@@ -210,23 +211,6 @@ export class NDView<T extends DataType, D extends Dims> {
     return offset;
   }
 
-  // symmetric operation preperation
-  private y(value: NDView<DataType, D> | IndexType<T>, strict?: boolean | 1) {
-    if (!value[ndvInternals]) {
-      const buf = new dataTypeBufferMap[this.t.t](1) as DataTypeBuffer<T>;
-      buf[0] = value;
-      value = new NDView(new FlatArray(buf), this.d, this.d.map(() => 0), 0);
-    }
-    const val = value as NDView<T, D>;
-    if (strict && !isAssignable(this.t.t, val.t.t)) {
-      throw new TypeError(`cannot assign to ndarray of type ${dataTypeNames[val.t.t]} to ${dataTypeNames[this.t.t]}`);
-    }
-    if (val.d.length != this.d.length || val.d.some((v, i) => this.d[i] != v)) {
-      throw new TypeError(`incompatible dimensions: expected (${this.d.join(', ')}), found (${val.d.join(', ')})`);
-    }
-    return val;
-  }
-
   *[Symbol.iterator]() {
     const target = this[ndvInternals];
     if (!target.d.length) throw new TypeError('cannot iterate over scalar');
@@ -242,9 +226,14 @@ export class NDView<T extends DataType, D extends Dims> {
     }
   }
 
-  set(value: NDView<T, D> | IndexType<T>) {
-    const target = (this[ndvInternals] || this);
-    const val = target.y(value, 1)[ndvInternals];
+  set(value: NDView<AssignableType<T>> | IndexType<AssignableType<T>>) {
+    const [target, val] = broadcast(this, value);
+    if (!isAssignable(target.t.t, val.t.t)) {
+      throw new TypeError(`cannot assign to ndarray of type ${dataTypeNames[val.t.t]} to ${dataTypeNames[target.t.t]}`);
+    }
+    if (target.d.filter(v => v != 1).length != this.d.length) {
+      throw new TypeError(`cannot broadcast ndarray of shape (${value[ndvInternals] ? (value as NDView).d.join(', ') : ''}) to (${target.d.join(', ')})`);
+    }
     const set = (dim: number, ind: number, valInd: number) => {
       if (dim == target.d.length) target.t.b[ind] = val.t.b[valInd];
       else {
@@ -282,18 +271,22 @@ export class NDView<T extends DataType, D extends Dims> {
     return `ndarray<${dataTypeNames[target.t.t]}>(${target.d.join(', ')}) ${stringify(0, target.o)}`
   }
 
-  private [Symbol.for('nodejs.util.inspect.custom')]() {
+  toBuffer(): DataTypeBuffer<T> {
+    return this.flatten().t.b;
+  }
+
+  [Symbol.for('nodejs.util.inspect.custom')]() {
     return this.toString();
   }
 
-  private [Symbol.toPrimitive]() {
+  [Symbol.toPrimitive]() {
     const id = getFreeID();
     recentAccesses.set(id, this[ndvInternals]);
     queueMicrotask(() => recentAccesses.delete(id));
     return `${indexablePrefix}${zws.repeat(id)}<${dataTypeNames[this.t.t]}>(${this.d.join('x')}) [...]`;
   }
 
-  reshape(dims: Dims) {
+  reshape<ND extends Dims>(dims: ND): NDView<T, ND> {
     const target = (this[ndvInternals] || this), size = target.size;
     if (dims.reduce((a, b) => a * b, 1) != size) {
       throw new TypeError(`dimensions (${dims.join(', ')}) do not match data length ${size}`);
@@ -329,7 +322,7 @@ export class NDView<T extends DataType, D extends Dims> {
 
   flatten() {
     const target = (this[ndvInternals] || this);
-    const ret = ndarray(target.t.t, [target.size]);
+    const ret = ndarray(target.t.t, [target.size] as [number]);
     const dst = ret[ndvInternals];
     let dstInd = -1;
     const set = (dim: number, srcInd: number) => {

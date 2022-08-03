@@ -74,7 +74,7 @@ export function guessType(value: unknown) {
   if (typeof value == 'bigint') return DataType.Int64;
   if (typeof value == 'string') return DataType.String;
   if (typeof value == 'boolean') return DataType.Bool;
-  if (value && typeof value['re'] == 'number' && typeof value['im'] == 'number') return DataType.Complex;
+  if (value && typeof value['real'] == 'number' && typeof value['imag'] == 'number') return DataType.Complex;
   return DataType.Any;
 }
 

@@ -10,9 +10,14 @@ export function wrap(obj: Complex) {
       return this.toString();
     }
   });
+  Object.defineProperty(obj, Symbol.for('nodejs.util.inspect.custom'), {
+    value: function() {
+      return this.toString();
+    }
+  });
   Object.defineProperty(obj, 'toString', {
     value: function() {
-      return `${this.real} ${this.imag < 0 ? '-' : '+'} ${this.imag}i`;
+      return `${this.real} ${this.imag < 0 ? '-' : '+'} ${Math.abs(this.imag)}i`;
     },
   });
   return obj;

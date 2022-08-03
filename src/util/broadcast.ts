@@ -32,5 +32,5 @@ export function broadcast<T extends DataType[]>(...views: Broadcastable<T>) {
       }
     }
   }
-  return allInfo.map(info => new NDView(info.v['t'], info.d.reverse(), info.s.reverse(), info.v['o'])) as unknown as Broadcast<T>;
+  return allInfo.map(info => new NDView(info.v['t'], info.d.reverse(), info.s.reverse(), info.v['o'])[ndvInternals]) as unknown as Broadcast<T>;
 }
