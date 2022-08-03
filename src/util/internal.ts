@@ -1,0 +1,1 @@
+export const ndvInternals = Symbol('ndview-internals');

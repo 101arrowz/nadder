@@ -1,5 +1,6 @@
 import { NDView, ndarray } from '../core/ndarray';
 import { DataType, guessType, IndexType } from '../core/datatype';
+import { ndvInternals } from './internal';
 
 type Broadcastable<T extends DataType[]> = { [I in keyof T]: NDView<T[I]> | IndexType<T[I]> };
 type Broadcast<T extends DataType[]> = { [I in keyof T]: NDView<T[I]> };
@@ -8,7 +9,7 @@ export function broadcast<T extends DataType[]>(...views: Broadcastable<T>) {
   if (views.length < 2) return views as Broadcast<T>;
   let maxDims = 0;
   const allInfo = views.map(v => {
-    if (!(v instanceof NDView)) {
+    if (!v[ndvInternals]) {
       const nd = ndarray(guessType(v), []);
       nd['t'].b[0] = v;
       v = nd;

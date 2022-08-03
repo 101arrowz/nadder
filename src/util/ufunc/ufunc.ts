@@ -2,6 +2,7 @@ import { Dims, ndarray, NDView } from '../../core/ndarray';
 import { DataType, dataTypeNames, IndexType } from '../../core/datatype';
 import { broadcast } from '../broadcast';
 import { Bitset } from '../containers';
+import { ndvInternals } from '../internal';
 
 type MultiType = readonly DataType[];
 type MultiTypeArgs = readonly MultiType[];
@@ -34,12 +35,17 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
   return ((...args: UfuncArgs<MultiTypeArgs, MultiType, DataType, Dims>) => {
     if (args.length > nin + 1 || args.length < nin) throw new TypeError(`${name} takes ${nin} arguments and optional arguments; got ${args.length} arguments`);
     let { where = true, out, dtype } = (args.length > nin ? args.pop() : {}) as UfuncOpts<MultiTypeArgs, MultiType, DataType, Dims>;
-    const [ndWhere, ...inputs] = broadcast(where, ...(args as NDView[]));
-    const possibleImpls = fastImpls.filter(([ins]) => ins.every((mask, i) => mask & inputs[i]['t'].t));
+    const [proxyWhere, ...inputs] = broadcast(where, ...(args as NDView[]));
+    const ndWhere = proxyWhere[ndvInternals];
+    if (ndWhere['t'].t != DataType.Bool) throw new TypeError(`${name} expects where to be a boolean ndarray`);
+    const fastInputs = inputs.map(input => input[ndvInternals]);
+    const possibleImpls = fastImpls.filter(([ins]) => ins.every((mask, i) => mask & fastInputs[i]['t'].t));
     if (!possibleImpls.length) throw new TypeError(`${name} is not implemented for the given arguments`);
-    const chosenImpl = possibleImpls.find(([_, outs]) => outs.every(t => t == dtype)) || (dtype = dtype || possibleImpls[0][1][0], possibleImpls[0]);
+    const chosenImpl = dtype
+      ? possibleImpls.find(([_, outs]) => outs.every(t => t == dtype)) || possibleImpls[0]
+      : (dtype = possibleImpls[0][1][0], possibleImpls[0]);
     const [ins, outs, impl] = chosenImpl;
-    const dims = inputs[0]['d'];
+    const dims = fastInputs[0]['d'];
     if (nout > 1) {
       if (out) {
         if (!Array.isArray(out) || out.length != nout) {
@@ -47,7 +53,7 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
         }
         for (let i = 0; i < out.length; ++i) {
           const curout = out[i] as NDView;
-          if (!(curout instanceof NDView)) {
+          if (!curout[ndvInternals]) {
             throw new TypeError(`${name} expected output ${i + 1} to be an ndarray`);
           }
           if (curout['t'].t != dtype) {
@@ -58,19 +64,29 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
           }
         }
       } else out = outs.map(() => ndarray(dtype, dims)) as unknown as typeof out;
-
-      for (const index of inputs[0]['r']()) {
-        if (!ndWhere['t'].b[ndWhere['c'](index)]) continue;
-        const values = inputs.map(input => input['t'].b[input['c'](index)]);
-        const result = impl(...values);
-        for (let i = 0; i < nout; ++i) {
-          out[i]['t'].b[out[i]['c'](index)] = result[i];
+      const assign = (out as unknown as NDView[]).map(v => v[ndvInternals]);
+      const coord = dims.map(() => -1);
+      // TODO: fastpaths
+      const call = (dim: number) => {
+        if (dim == dims.length) {
+          if (ndWhere['t'].b[ndWhere['c'](coord)]) {
+            const values = fastInputs.map(input => input['t'].b[input['c'](coord)]);
+            const result = impl(...values);
+            for (let i = 0; i < nout; ++i) {
+              assign[i]['t'].b[assign[i]['c'](coord)] = result[i];
+            }
+          }
+        } else {
+          for (coord[dim] = 0; coord[dim] < dims[dim]; ++coord[dim]) {
+            call(dim + 1);
+          }
         }
       }
+      call(0);
       return dims.length ? out : (out as unknown as NDView[]).map(o => o['t'].b[o['o']]);
     } else {
       if (out) {
-        if (!(out instanceof NDView)) {
+        if (!out[ndvInternals]) {
           throw new TypeError(`${name} expected out to be an ndarray`);
         }
         if (out['t'].t != dtype) {
@@ -80,11 +96,81 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
           throw new TypeError(`${name} expected broadcast shape (${dims.join(', ')}) to match output shape (${out['d'].join(', ')})`);
         }
       } else out = ndarray(dtype, dims);
-      for (const index of inputs[0]['r']()) {
-        if (!ndWhere['t'].b[ndWhere['c'](index)]) continue;
-        const values = inputs.map(input => input['t'].b[input['c'](index)]);
-        const result = impl(...values);
-        out['t'].b[out['c'](index)] = result;
+      const assign = out[ndvInternals];
+      if (nin == 2) {
+        const [in0, in1] = fastInputs;
+        const callWhere = (dim: number, ind0: number, ind1: number, outInd: number, whereInd: number) => {
+          if (dim == dims.length) {
+            if (ndWhere['t'].b[whereInd]) {
+              assign['t'].b[outInd] = impl(in0['t'].b[ind0], in1['t'].b[ind1]);
+            }
+          } else {
+            for (let i = 0; i < dims[dim]; ++i) {
+              callWhere(dim + 1, ind0, ind1, outInd, whereInd);
+              ind0 += in0['s'][dim];
+              ind1 += in1['s'][dim];
+              outInd += assign['s'][dim];
+              whereInd += ndWhere['s'][dim];
+            }
+          }
+        };
+        const call = (dim: number, ind0: number, ind1: number, outInd: number) => {
+          if (dim == dims.length) {
+            assign['t'].b[outInd] = impl(in0['t'].b[ind0], in1['t'].b[ind1]);
+          } else {
+            for (let i = 0; i < dims[dim]; ++i) {
+              call(dim + 1, ind0, ind1, outInd);
+              ind0 += in0['s'][dim];
+              ind1 += in1['s'][dim];
+              outInd += assign['s'][dim];
+            }
+          }
+        };
+        (where === true ? call : callWhere)(0, in0['o'], in1['o'], assign['o'], ndWhere['o']);
+      } else if (nin == 1) {
+        const [input] = fastInputs;
+        const callWhere = (dim: number, ind: number, outInd: number, whereInd: number) => {
+          if (dim == dims.length) {
+            if (ndWhere['t'].b[whereInd]) {
+              assign['t'].b[outInd] = impl(input['t'].b[ind]);
+            }
+          } else {
+            for (let i = 0; i < dims[dim]; ++i) {
+              callWhere(dim + 1, ind, outInd, whereInd);
+              ind += input['s'][dim];
+              outInd += assign['s'][dim];
+              whereInd += ndWhere['s'][dim];
+            }
+          }
+        };
+        const call = (dim: number, ind: number, outInd: number) => {
+          if (dim == dims.length) {
+            assign['t'].b[outInd] = impl(input['t'].b[ind]);
+          } else {
+            for (let i = 0; i < dims[dim]; ++i) {
+              call(dim + 1, ind, outInd);
+              ind += input['s'][dim];
+              outInd += assign['s'][dim];
+            }
+          }
+        };
+        (where === true ? call : callWhere)(0, input['o'], assign['o'], ndWhere['o']);
+      } else {
+        const coord = dims.map(() => -1);
+        // TODO: fastpaths
+        const call = (dim: number) => {
+          if (dim == dims.length) {
+            if (ndWhere['t'].b[ndWhere['c'](coord)]) {
+              const values = fastInputs.map(input => input['t'].b[input['c'](coord)]);
+              assign['t'].b[assign['c'](coord)] = impl(...values);
+            }
+          } else {
+            for (coord[dim] = 0; coord[dim] < dims[dim]; ++coord[dim]) {
+              call(dim + 1);
+            }
+          }
+        }
+        call(0);
       }
       return dims.length ? out : out['t'].b[out['o']];
     }

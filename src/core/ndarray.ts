@@ -1,6 +1,6 @@
 import { DataType, DataTypeBuffer, dataTypeNames, dataTypeBufferMap, IndexType, isAssignable, bestGuess, guessType } from './datatype';
 import { FlatArray } from './flatarray';
-import { Bitset, Complex, ComplexArray, StringArray } from '../util';
+import { Bitset, Complex, ComplexArray, StringArray, ndvInternals } from '../util';
 
 export type Dims = readonly number[];
 
@@ -32,13 +32,14 @@ const getFreeID = () => {
   return id;
 }
 
-const indexablePrefix = `ndarray${zws}`
+const indexablePrefix = `ndarray${zws}`;
 
 export interface NDView<T extends DataType = DataType, D extends Dims = Dims> extends Iterable<NDViewChild<T, D>> {
   [index: number]: NDViewChild<T, D>;
   [index: string]: IndexType<T> | NDView<T, Dims>;
 }
 export class NDView<T extends DataType, D extends Dims> {
+  private [ndvInternals]: this;
   // raw ndarray
   private t: FlatArray<T>;
   // dimensions
@@ -55,6 +56,7 @@ export class NDView<T extends DataType, D extends Dims> {
     this.o = offset;
 
     const get = (target: this, key: string | symbol, unbox?: 1) => {
+      if (key == ndvInternals) return target;
       if (typeof key == 'symbol') return target[key as unknown as string];
       const parts = key.split(',').map(part => part.trim().split(':'));
       let nextSrc = src;
@@ -105,12 +107,13 @@ export class NDView<T extends DataType, D extends Dims> {
               if (part[0][i] != zws) break;
             }
             const id = i - indexablePrefix.length;
-            const view = recentAccesses.get(id);
+            let view = recentAccesses.get(id);
             if (view) {
               recentAccesses.delete(id);
+              view = view[ndvInternals];
               if (view.t.t <= DataType.Uint32) {
                 const tmpView = ndarray(nextSrc.t, view.d.concat(nextDims.slice(workingIndex)));
-
+                throw new TypeError('unimplemented');
               } else if (view.t.t == DataType.Bool) {
                 const preDims = nextDims.slice(0, workingIndex);
                 const workingDims = nextDims.slice(workingIndex);
@@ -118,19 +121,36 @@ export class NDView<T extends DataType, D extends Dims> {
                   throw new TypeError(`incompatible dimensions: expected (${workingDims.join(', ')}), found (${view.d.join(', ')})`);
                 }
                 const trueOffsets: number[] = [];
-                for (const ind of view.r()) {
-                  if (view.t.b[view.c(ind)]) {
-                    let offset = nextOffset;
-                    for (let i = 0; i < workingDims.length; ++i) offset += ind[i] * nextStride[workingIndex + i];
-                    trueOffsets.push(offset);
+                const collect = (dim: number, ind: number, viewInd: number) => {
+                  if (dim == view.d.length) {
+                    if (view.t.b[viewInd]) trueOffsets.push(ind);
+                  } else {
+                    for (let i = 0; i < view.d[dim]; ++i) {
+                      collect(dim + 1, ind, viewInd);
+                      ind += nextStride[workingIndex + dim];
+                      viewInd += view.s[dim];
+                    }
                   }
                 }
-                const tmpView = ndarray(nextSrc.t, [...preDims, trueOffsets.length]);
-                for (const ind of tmpView.r()) {
-                  let offset = trueOffsets[ind[workingIndex]];
-                  for (let i = 0; i < workingIndex; ++i) offset += ind[i] * nextStride[i];
-                  tmpView.t.b[tmpView.c(ind)] = nextSrc.b[offset];
+                collect(0, nextOffset, view.o);
+                const tmpView = ndarray(nextSrc.t, [...preDims, trueOffsets.length])[ndvInternals];
+                const copy = (dim: number, base: number, tmpInd: number, finalInd: number) => {
+                  if (dim == tmpView.d.length) {
+                    tmpView.t.b[tmpInd] = nextSrc.b[trueOffsets[finalInd] + base];
+                  } else if (dim == workingIndex) {
+                    for (let i = 0; i < tmpView.d[dim]; ++i) {
+                      copy(dim + 1, base, tmpInd, i);
+                      tmpInd += tmpView.s[dim];
+                    }
+                  } else {
+                    for (let i = 0; i < tmpView.d[dim]; ++i) {
+                      copy(dim + 1, base, tmpInd, -1);
+                      base += nextStride[dim];
+                      tmpInd += tmpView.s[dim];
+                    }
+                  }
                 }
+                copy(0, 0, 0, -1);
                 nextSrc = tmpView.t;
                 nextDims = tmpView.d;
                 nextStride = tmpView.s;
@@ -193,7 +213,7 @@ export class NDView<T extends DataType, D extends Dims> {
 
   // symmetric operation preperation
   private y(value: NDView<DataType, D> | IndexType<T>, strict?: boolean | 1) {
-    if (!(value instanceof NDView)) {
+    if (!value[ndvInternals]) {
       const buf = new dataTypeBufferMap[this.t.t](1) as DataTypeBuffer<T>;
       buf[0] = value;
       value = new NDView(new FlatArray(buf), this.d, this.d.map(() => 0), 0);
@@ -206,20 +226,6 @@ export class NDView<T extends DataType, D extends Dims> {
       throw new TypeError(`incompatible dimensions: expected (${this.d.join(', ')}), found (${val.d.join(', ')})`);
     }
     return val;
-  }
-
-  // iterate over indices with same array
-  private *r() {
-    const dims = this.d;
-    const coord = dims.map(() => -1);
-    const inner = function*(dim: number): Generator<number[]> {
-      if (dim == dims.length) yield coord;
-      else for (let i = 0; i < dims[dim]; ++i) {
-        coord[dim] = i;
-        yield* inner(dim + 1);
-      }
-    }
-    yield* inner(0);
   }
 
   *[Symbol.iterator]() {
@@ -237,23 +243,28 @@ export class NDView<T extends DataType, D extends Dims> {
   }
 
   set(value: NDView<T, D> | IndexType<T>) {
-    const val = this.y(value, 1);
-    const coord = this.d.map(() => -1);
-    const set = (dim: number) => {
+    const val = this.y(value, 1)[ndvInternals];
+    const set = (dim: number, ind: number, valInd: number) => {
       if (dim == this.d.length) {
-        this.t.b[this.c(coord)] = val.t.b[val.c(coord)];
-      } else if (dim == this.d.length - 1 && this.s[dim] == 1 && val.s[dim] == 1) {
-        coord[dim] = 0;
-        const srcStart = val.c(coord);
-        (this.t.b as Uint8Array).set((val.t.b as Uint8Array).subarray(srcStart, srcStart + this.d[coord.length]), this.c(coord));
-      } else {
-        for (let i = 0; i < this.d[dim]; ++i) {
-          coord[dim] = i;
-          set(dim + 1);
+        this.t.b[ind] = val.t.b[valInd];
+        return;
+      }
+      if (dim == this.d.length - 1 && this.s[dim] == 1) {
+        if (val.s[dim] == 1 && (this.t.b['set'] && val.t.b['subarray'])) {
+          (this.t.b as Uint8Array).set((val.t.b as Uint8Array).subarray(valInd, valInd + this.d[dim]), ind);
+          return;
+        } else if (!val.s[dim] && (this.t.b['fill'])) {
+          (this.t.b as Uint8Array).fill(val.t.b[valInd] as number, ind, ind + this.d[dim]);
+          return;
         }
       }
+      for (let i = 0; i < this.d[dim]; ++i) {
+        set(dim + 1, ind, valInd);
+        ind += this.s[dim];
+        valInd += val.s[dim];
+      }
     }
-    set(0);
+    set(0, this.o, val.o);
   }
 
   toString() {
@@ -269,34 +280,6 @@ export class NDView<T extends DataType, D extends Dims> {
     }
     return `ndarray<${dataTypeNames[this.t.t]}>(${this.d.join(', ')}) ${stringify(0)}`
   }
-
-  // static {
-  //   const numOp = (opName: string, name: string, op: (a: number, b: number) => void) => {
-  //     NDView.prototype[name] = function<T extends DataType, D extends Dims>(this: NDView<T, D>, value: NDView<T, D> | IndexType<T>, inPlace?: boolean) {
-  //       if (this.t.t >= DataType.Bool) throw new TypeError(`cannot ${opName} non-numeric ndarrays`);
-  //       const val = this.y(value, inPlace);
-  //       if (inPlace) {
-  //         for (const index of this.r()) {
-  //           const ind = this.c(index);
-  //           this.t.b[ind] = op(this.t.b[ind] as number, val.t.b[val.c(index)] as number);
-  //         }
-  //         return this;
-  //       } else {
-  //         let type: DataType = this.t.t;
-  //         if (!isAssignable(type, val.t.t)) {
-  //           type = val.t.t;
-  //           if (!isAssignable(type, this.t.t)) type = DataType.Float32;
-  //         }
-  //         const dst = ndarray(type, this.d);
-  //         for (const index of this.r()) {
-  //           dst.t.b[dst.c(index)] = op(this.t.b[this.c(index)] as number, val.t.b[val.c(index)] as number);
-  //         }
-  //         return dst;
-  //       }
-  //     };
-  //   }
-  //   for (const op of numOps) numOp.apply(null, op);
-  // }
 
   private [Symbol.for('nodejs.util.inspect.custom')]() {
     return this.toString();
