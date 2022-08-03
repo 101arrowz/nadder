@@ -107,10 +107,9 @@ export class NDView<T extends DataType, D extends Dims> {
               if (part[0][i] != zws) break;
             }
             const id = i - indexablePrefix.length;
-            let view = recentAccesses.get(id);
+            const view = recentAccesses.get(id);
             if (view) {
               recentAccesses.delete(id);
-              view = view[ndvInternals];
               if (view.t.t <= DataType.Uint32) {
                 const tmpView = ndarray(nextSrc.t, view.d.concat(nextDims.slice(workingIndex)));
                 throw new TypeError('unimplemented');
@@ -229,56 +228,58 @@ export class NDView<T extends DataType, D extends Dims> {
   }
 
   *[Symbol.iterator]() {
-    if (!this.d.length) throw new TypeError('cannot iterate over scalar');
-    if (this.d.length == 1) {
-      for (let i = 0; i < this.d[0]; ++i) {
-        yield this.t.b[this.o + i * this.s[0]] as NDViewChild<T, D>;
+    const target = this[ndvInternals];
+    if (!target.d.length) throw new TypeError('cannot iterate over scalar');
+    if (target.d.length == 1) {
+      for (let i = 0; i < target.d[0]; ++i) {
+        yield target.t.b[target.o + i * target.s[0]] as NDViewChild<T, D>;
       }
     } else {
-      const nextDims = this.d.slice(1), nextStride = this.s.slice(1);
-      for (let i = 0; i < this.d[0]; ++i) {
-        yield new NDView<T, Dims>(this.t, nextDims, nextStride, this.o + i * this.s[0]) as NDViewChild<T, D>;
+      const nextDims = target.d.slice(1), nextStride = target.s.slice(1);
+      for (let i = 0; i < target.d[0]; ++i) {
+        yield new NDView<T, Dims>(target.t, nextDims, nextStride, target.o + i * target.s[0]) as NDViewChild<T, D>;
       }
     }
   }
 
   set(value: NDView<T, D> | IndexType<T>) {
-    const val = this.y(value, 1)[ndvInternals];
+    const target = (this[ndvInternals] || this);
+    const val = target.y(value, 1)[ndvInternals];
     const set = (dim: number, ind: number, valInd: number) => {
-      if (dim == this.d.length) {
-        this.t.b[ind] = val.t.b[valInd];
-        return;
-      }
-      if (dim == this.d.length - 1 && this.s[dim] == 1) {
-        if (val.s[dim] == 1 && (this.t.b['set'] && val.t.b['subarray'])) {
-          (this.t.b as Uint8Array).set((val.t.b as Uint8Array).subarray(valInd, valInd + this.d[dim]), ind);
-          return;
-        } else if (!val.s[dim] && (this.t.b['fill'])) {
-          (this.t.b as Uint8Array).fill(val.t.b[valInd] as number, ind, ind + this.d[dim]);
-          return;
+      if (dim == target.d.length) target.t.b[ind] = val.t.b[valInd];
+      else {
+        if (dim == target.d.length - 1 && target.s[dim] == 1) {
+          if (val.s[dim] == 1 && (target.t.b['set'] && val.t.b['subarray'])) {
+            (target.t.b as Uint8Array).set((val.t.b as Uint8Array).subarray(valInd, valInd + target.d[dim]), ind);
+            return;
+          }
+          if (!val.s[dim] && (target.t.b['fill'])) {
+            (target.t.b as Uint8Array).fill(val.t.b[valInd] as number, ind, ind + target.d[dim]);
+            return;
+          }
+        }
+        for (let i = 0; i < target.d[dim]; ++i) {
+          set(dim + 1, ind, valInd);
+          ind += target.s[dim];
+          valInd += val.s[dim];
         }
       }
-      for (let i = 0; i < this.d[dim]; ++i) {
-        set(dim + 1, ind, valInd);
-        ind += this.s[dim];
-        valInd += val.s[dim];
-      }
     }
-    set(0, this.o, val.o);
+    set(0, target.o, val.o);
   }
 
   toString() {
-    const coord = this.d.map(() => -1);
-    const stringify = (dim: number) => {
-      if (dim == this.d.length) return this.t.b[this.c(coord)].toString();
+    const target = this[ndvInternals];
+    const stringify = (dim: number, ind: number) => {
+      if (dim == target.d.length) return target.t.b[ind].toString();
       let str = '[';
       for (let i = 0; i < this.d[dim]; ++i) {
-        coord[dim] = i;
-        str += stringify(dim + 1) + ', ';
+        str += stringify(dim + 1, ind) + ', ';
+        ind += target.s[dim];
       }
       return str.slice(0, -2) + ']';
     }
-    return `ndarray<${dataTypeNames[this.t.t]}>(${this.d.join(', ')}) ${stringify(0)}`
+    return `ndarray<${dataTypeNames[target.t.t]}>(${target.d.join(', ')}) ${stringify(0, target.o)}`
   }
 
   private [Symbol.for('nodejs.util.inspect.custom')]() {
@@ -287,23 +288,62 @@ export class NDView<T extends DataType, D extends Dims> {
 
   private [Symbol.toPrimitive]() {
     const id = getFreeID();
-    recentAccesses.set(id, this);
+    recentAccesses.set(id, this[ndvInternals]);
     queueMicrotask(() => recentAccesses.delete(id));
     return `${indexablePrefix}${zws.repeat(id)}<${dataTypeNames[this.t.t]}>(${this.d.join('x')}) [...]`;
   }
 
   reshape(dims: Dims) {
-    if (dims.reduce((a, b) => a * b, 1) != this.size) {
-      throw new TypeError(`dimensions (${dims.join(', ')}) do not match data length ${this.size}`);
+    const target = (this[ndvInternals] || this), size = target.size;
+    if (dims.reduce((a, b) => a * b, 1) != size) {
+      throw new TypeError(`dimensions (${dims.join(', ')}) do not match data length ${size}`);
     }
-    const cd: number[] = [], cs: number[] = [];
-    for (let i = 0; i < this.d.length; ++i) {
-      if (this.d[i] != 1) {
-        cd.push(this.d[i]);
-        cs.push(this.s[i]);
+    const cd: number[] = [], cs: number[] = [], stride: number[] = dims.map(() => 0);
+    for (let i = 0; i < target.d.length; ++i) {
+      if (target.d[i] != 1) {
+        cd.push(target.d[i]);
+        cs.push(target.s[i]);
       }
     }
-    
+    let s = 0, e = 1, ns = 0, ne = 1;
+    while (s < cd.length && ns < dims.length) {
+      let srcChunks = cd[s], dstChunks = dims[ns];
+      
+      while (srcChunks != dstChunks) {
+        if (srcChunks < dstChunks) srcChunks *= cd[e++];
+        else dstChunks *= dims[ne++];
+      }
+      
+      for (let i = s + 1; i < e; ++i) {
+        if (cs[i - 1] != cd[i] * cs[i]) {
+          return target.flatten().reshape(dims);
+        }
+      }
+      
+      stride[ne - 1] = cs[e - 1];
+      for (let i = ne - 1; i > ns; --i) stride[i - 1] = stride[i] * cd[i];
+      s = e++, ns = ne++;
+    }
+    return new NDView(target.t, dims, stride, target.o);
+  }
+
+  flatten() {
+    const target = (this[ndvInternals] || this);
+    const ret = ndarray(target.t.t, [target.size]);
+    const dst = ret[ndvInternals];
+    let dstInd = -1;
+    const set = (dim: number, srcInd: number) => {
+      if (dim == target.d.length) {
+        dst.t.b[++dstInd] = target.t.b[srcInd];
+      } else {
+        for (let i = 0; i < target.d[dim]; ++i) {
+          set(dim + 1, srcInd);
+          srcInd += target.s[dim];
+        }
+      }
+    }
+    set(0, target.o);
+    return ret;
   }
 
   get shape(): D {
@@ -353,17 +393,17 @@ export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | Data
 type RecursiveArray<T> = T | RecursiveArray<T>[];
 
 
-const recurseFind = (data: RecursiveArray<unknown>): [number[], unknown[], DataType] => {
+const recurseFind = (data: RecursiveArray<unknown>): [number[], DataType] => {
   if (Array.isArray(data)) {
-    if (data.length == 0) return [[0], [], DataType.Any];
+    if (data.length == 0) return [[0], DataType.Any];
     const results = data.map(recurseFind);
-    const newType = bestGuess(results.map(([,,t]) => t));
+    const newType = bestGuess(results.map(([, t]) => t));
     if (results.some(([dim]) => dim.length != results[0][0].length || dim.some((v, i) => results[0][0][i] != v))) {
       throw new TypeError('jagged ndarrays are not supported');
     }
-    return [[data.length, ...results[0][0]], results.flatMap(([,b]) => b), newType];
+    return [[data.length, ...results[0][0]], newType];
   }
-  return [[], [data], guessType(data)];
+  return [[], guessType(data)];
 }
 
 export function array(data: RecursiveArray<number>): NDView<DataType.Int32 | DataType.Float64>;
@@ -373,7 +413,8 @@ export function array(data: RecursiveArray<boolean>): NDView<DataType.Bool>;
 export function array(data: RecursiveArray<Complex>): NDView<DataType.Complex>;
 export function array(data: RecursiveArray<unknown>): NDView<DataType.Any>;
 export function array(data: RecursiveArray<unknown>): NDView<DataType> {
-  const [dims, flat, type] = recurseFind(data);
+  const [dims, type] = recurseFind(data);
+  const flat = Array.isArray(data) ? data.flat(Infinity) : [data];
   const arr = ndarray(type, dims);
   for (let i = 0; i < flat.length; ++i) {
     arr['t'].b[i] = flat[i];

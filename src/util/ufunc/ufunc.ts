@@ -10,7 +10,7 @@ type MultiTypeArgs = readonly MultiType[];
 type AnyDataType<T extends MultiType> = IndexType<T[number]>;
 type OpReturnType<T extends MultiType> = '1' extends keyof T ? [...({ [K in keyof T]: IndexType<T[K]> })] : IndexType<T[0]>;
 type OpArgs<T extends MultiTypeArgs> = [...({ [I in keyof T]: IndexType<T[I][number]> })];
-type OpImpl<T extends MultiTypeArgs, TR extends MultiType> = [args: T, result: TR, impl: (...args: OpArgs<T>) => OpReturnType<TR>];
+type OpImpl<T extends MultiTypeArgs, TR extends MultiType> = readonly [args: T, result: TR, impl: (...args: OpArgs<T>) => OpReturnType<TR>];
 
 type UfuncReturnType<T extends MultiType, TF extends DataType, D extends Dims> = '1' extends keyof T ? [...({ [K in keyof T]: NDView<DataType extends TF ? T[K] : TF, D> })] : NDView<DataType extends TF ? T[0] : TF, D>;
 

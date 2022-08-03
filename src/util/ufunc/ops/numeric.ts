@@ -4,13 +4,17 @@ import { opImpl, ufunc } from '../ufunc';
 
 const identity = <T>(x: T) => x;
 
-const typeImpls = (impl: (a: number, b: number) => number, bigImpl: (a: bigint, b: bigint) => bigint, complexImpl: (a: Complex, b: Complex) => Complex) => {
-  const fixedBoolImpl = (a: boolean, b: boolean) => impl(a as unknown as number, b as unknown as number) as unknown as boolean;
+const complexTypeImpl = (complexImpl: (a: Complex, b: Complex) => Complex) => {
   const fixedComplexImpl = (a: number | boolean | bigint | Complex, b: number | boolean | bigint | Complex) => {
     if (typeof a != 'object') a = { real: Number(a), imag: 0 };
     if (typeof b != 'object') b = { real: Number(b), imag: 0 };
     return complexImpl(a, b);
   }
+  return opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64, DataType.Complex], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64, DataType.Complex]] as const, [DataType.Complex] as const, fixedComplexImpl);
+}
+
+const typeImpls = (impl: (a: number, b: number) => number, bigImpl: (a: bigint, b: bigint) => bigint) => {
+  const fixedBoolImpl = (a: boolean, b: boolean) => impl(a as unknown as number, b as unknown as number) as unknown as boolean;
   const fixedSmallImpl = (a: number | boolean | bigint, b: number | boolean | bigint) => {
     if (typeof a == 'bigint') a = Number(a);
     if (typeof b == 'bigint') b = Number(b);
@@ -34,7 +38,6 @@ const typeImpls = (impl: (a: number, b: number) => number, bigImpl: (a: bigint, 
     opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Int64], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Int64]] as const, [DataType.Int64] as const, fixedBigImpl),
     opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32]] as const, [DataType.Float32] as const, impl),
     opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64]] as const, [DataType.Float64] as const, fixedSmallImpl),
-    opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64, DataType.Complex], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64, DataType.Complex]] as const, [DataType.Complex] as const, fixedComplexImpl),
   ] as const;
 }
 
@@ -42,32 +45,49 @@ export const add = ufunc(
   'add',
   2,
   1,
-  ...typeImpls((a, b) => a + b, (a, b) => a + b, (a, b) => ({ real: a.real + b.real, imag: a.imag + b.imag })),
+  ...typeImpls((a, b) => a + b, (a, b) => a + b),
+  complexTypeImpl((a, b) => ({ real: a.real + b.real, imag: a.imag + b.imag }))
 );
 
 export const sub = ufunc(
   'sub',
   2,
   1,
-  ...typeImpls((a, b) => a - b, (a, b) => a - b, (a, b) => ({ real: a.real - b.real, imag: a.imag - b.imag })),
+  ...typeImpls((a, b) => a - b, (a, b) => a - b),
+  complexTypeImpl((a, b) => ({ real: a.real - b.real, imag: a.imag - b.imag }))
 );
 
 export const mul = ufunc(
   'mul',
   2,
   1,
-  ...typeImpls((a, b) => a * b, (a, b) => a * b, (a, b) => ({ real: a.real * b.real - a.imag * b.imag, imag: a.real * b.imag + a.imag * b.real })),
+  ...typeImpls((a, b) => a * b, (a, b) => a * b),
+  complexTypeImpl((a, b) => ({ real: a.real * b.real - a.imag * b.imag, imag: a.real * b.imag + a.imag * b.real }))
 );
 
 export const div = ufunc(
   'div',
   2,
   1,
-  ...typeImpls((a, b) => a / b, (a, b) => a / b, (a, b) => {
+  ...typeImpls((a, b) => a / b, (a, b) => a / b),
+  complexTypeImpl((a, b) => {
     const denom = b.real * b.real + b.imag * b.imag;
     return { real: (a.real * b.real + a.imag * b.imag) / denom, imag: (a.imag * b.real - a.real * b.imag) / denom };
-  }),
+  })
 );
+
+export const mod = ufunc(
+  'div',
+  2,
+  1,
+  ...typeImpls((a, b) => a % b, (a, b) => a % b),
+);
+
+export const exp = ufunc(
+  'exp',
+  1,
+  1,
+)
 
 export const conjugate = ufunc(
   'conjugate',
