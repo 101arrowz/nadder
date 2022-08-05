@@ -1,4 +1,4 @@
-import { DataType, DataTypeBuffer, dataTypeNames, dataTypeBufferMap, IndexType, isAssignable, bestGuess, guessType, AssignableType } from './datatype';
+import { DataType, DataTypeBuffer, dataTypeNames, dataTypeBufferMap, IndexType, isAssignable, bestGuess, guessType, AssignableType, NumericType } from './datatype';
 import { FlatArray } from './flatarray';
 import { Bitset, Complex, ComplexArray, StringArray, ndvInternals, broadcast } from '../util';
 
@@ -91,6 +91,8 @@ export class NDView<T extends DataType, D extends Dims> {
                   } else {
                     throw new TypeError(`cannot index ndarray with ndarray of type ${dataTypeNames[view.t.t]}`);
                   }
+                } else if (newPart[0] != '+' && newPart[0] != 'true' && newPart[0] != 'false') {
+                  workingIndex -= 1;
                 }
               } else workingIndex -= 1;
             }
@@ -101,7 +103,6 @@ export class NDView<T extends DataType, D extends Dims> {
             workingIndex++;
             continue;
           } else if (part[0].startsWith(indexablePrefix)) {
-            if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0-D ndarray');
             let i = indexablePrefix.length;
             for (; i < part[0].length; ++i) {
               if (part[0][i] != zws) break;
@@ -112,13 +113,22 @@ export class NDView<T extends DataType, D extends Dims> {
               recentAccesses.delete(id);
               if (view.t.t <= DataType.Uint32) {
                 const tmpView = ndarray(nextSrc.t, view.d.concat(nextDims.slice(workingIndex)));
+                if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0D ndarray');
                 throw new TypeError('unimplemented');
               } else if (view.t.t == DataType.Bool) {
+                if (!view.d.length) {
+                  nextDims.splice(workingIndex, 0, +view.t.b[view.o]);
+                  nextStride.splice(workingIndex, 0, 0);
+                  workingIndex++;
+                  continue;
+                }
+                if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0D ndarray');
                 const preDims = nextDims.slice(0, workingIndex);
                 const workingDims = nextDims.slice(workingIndex);
-                if (view.d.length != workingDims.length || view.d.some((v, i) => workingDims[i] != v)) {
-                  throw new TypeError(`incompatible dimensions: expected (${workingDims.join(', ')}), found (${view.d.join(', ')})`);
+                if (view.d.length > workingDims.length || view.d.some((v, i) => workingDims[i] != v)) {
+                  throw new TypeError(`incompatible dimensions: expected (${workingDims.slice(0, view.d.length).join(', ')}), found (${view.d.join(', ')})`);
                 }
+                const postDims = workingDims.slice(view.d.length);
                 const trueOffsets: number[] = [];
                 const collect = (dim: number, ind: number, viewInd: number) => {
                   if (dim == view.d.length) {
@@ -132,29 +142,35 @@ export class NDView<T extends DataType, D extends Dims> {
                   }
                 }
                 collect(0, nextOffset, view.o);
-                const tmpView = ndarray(nextSrc.t, [...preDims, trueOffsets.length])[ndvInternals];
-                const copy = (dim: number, base: number, tmpInd: number, finalInd: number) => {
+                // fix dims todo
+                const tmpView = ndarray(nextSrc.t, [...preDims, trueOffsets.length, ...postDims])[ndvInternals];
+                const copy = (dim: number, base: number, tmpInd: number) => {
                   if (dim == tmpView.d.length) {
-                    tmpView.t.b[tmpInd] = nextSrc.b[trueOffsets[finalInd] + base];
+                    tmpView.t.b[tmpInd] = nextSrc.b[base];
+                  } else if (dim < workingIndex || dim >= workingIndex + view.d.length) {
+                    for (let i = 0; i < tmpView.d[dim]; ++i) {
+                      copy(dim + 1, base, tmpInd);
+                      base += nextStride[dim];
+                      tmpInd += tmpView.s[dim];
+                    }
                   } else if (dim == workingIndex) {
                     for (let i = 0; i < tmpView.d[dim]; ++i) {
-                      copy(dim + 1, base, tmpInd, i);
+                      copy(dim + 1, base + trueOffsets[i], tmpInd);
                       tmpInd += tmpView.s[dim];
                     }
                   } else {
                     for (let i = 0; i < tmpView.d[dim]; ++i) {
-                      copy(dim + 1, base, tmpInd, -1);
-                      base += nextStride[dim];
+                      copy(dim + 1, base, tmpInd);
                       tmpInd += tmpView.s[dim];
                     }
                   }
-                }
-                copy(0, 0, 0, -1);
+                };
+                copy(0, 0, 0);
                 nextSrc = tmpView.t;
                 nextDims = tmpView.d;
                 nextStride = tmpView.s;
                 nextOffset = tmpView.o;
-                workingIndex = nextDims.length;
+                workingIndex += 1;
               } else {
                 throw new TypeError(`cannot index ndarray with ndarray of type ${dataTypeNames[view.t.t]}`);
               }
@@ -163,15 +179,21 @@ export class NDView<T extends DataType, D extends Dims> {
             throw new TypeError('ndarray index expired: ensure slices are used immediately after creation');
           }
           if (!part[0]) throw new TypeError('invalid syntax (empty slice)');
+          if (part[0] == 'true' || part[0] == 'false') {
+            nextDims.splice(workingIndex, 0, +(part[0] == 'true'));
+            nextStride.splice(workingIndex, 0, 0);
+            workingIndex++;
+            continue;
+          }
           let ind = +part[0];
           if (parts.length == 1 && isNaN(ind)) return target[key];
-          if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0-D ndarray');
+          if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0D ndarray');
           ind = fixInd(ind, nextDims.splice(workingIndex, 1)[0]);
           nextOffset += ind * nextStride.splice(workingIndex, 1)[0]
         } else if (part.length > 3) {
           throw new TypeError(`invalid slice ${key}`);
         } else {
-          if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0-D ndarray');
+          if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0D ndarray');
           let step = +(part[2] || 1);
           if (step == 0 || !Number.isInteger(step)) {
             throw new TypeError(`invalid step ${step}`);
@@ -271,7 +293,7 @@ export class NDView<T extends DataType, D extends Dims> {
     return `ndarray<${dataTypeNames[target.t.t]}>(${target.d.join(', ')}) ${stringify(0, target.o)}`
   }
 
-  toBuffer(): DataTypeBuffer<T> {
+  raw(): DataTypeBuffer<T> {
     return this.flatten().t.b;
   }
 
@@ -414,3 +436,6 @@ export function array(data: RecursiveArray<unknown>): NDView<DataType> {
   }
   return arr;
 }
+
+// export function arange<N extends number, T extends NumericType = DataType.Float64>(stop: N, dtype?: T): NDView<T, [N]>;
+// export function arange<T extends NumericType = DataType.Float64>(start: number, stop: number, dtype?: T): NDView<T, [N]>;

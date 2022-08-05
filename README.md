@@ -42,9 +42,9 @@ console.log(add(t, boolIndex))
 - Performant view-based manipulation; minimal copying
 - Fast bitset-backed boolean ndarrays
 - Interleaved complex numbers
-- Arithmetic operators
+- Arithmetic + algebraic operators for real, complex numbers
+- Correct TypeScript typings
 - In progress: support for most NumPy manipulations, more fast paths for higher performance, opt-in WASM modules
-- TBD: better TypeScript support (difficult due to type system limitations)
 
 ### Limitations
 - No direct Fortran (column-major) memory layout support
