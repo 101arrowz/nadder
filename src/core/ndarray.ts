@@ -112,9 +112,54 @@ export class NDView<T extends DataType, D extends Dims> {
             if (view) {
               recentAccesses.delete(id);
               if (view.t.t <= DataType.Uint32) {
-                const tmpView = ndarray(nextSrc.t, view.d.concat(nextDims.slice(workingIndex)));
                 if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0D ndarray');
-                throw new TypeError('unimplemented');
+                if (!view.d.length) {
+                  let ind = view.t.b[view.o] as number;
+                  ind = fixInd(ind, nextDims.splice(workingIndex, 1)[0]);
+                  nextOffset += ind * nextStride.splice(workingIndex, 1)[0];
+                  continue;
+                }
+                const preDims = nextDims.slice(0, workingIndex);
+                const postDims = nextDims.slice(workingIndex + 1);
+                const inView = workingIndex + view.d.length - 1;
+                const tmpView = ndarray(nextSrc.t, [...preDims, ...view.d, ...postDims]);
+                const copy = (dim: number, viewOff: number, dst: number, src: number) => {
+                  if (dim == tmpView.d.length) {
+                    tmpView.t.b[dst] = nextSrc.b[src];
+                  } else if (dim > inView) {
+                    for (let i = 0; i < tmpView.d[dim]; ++i) {
+                      copy(dim + 1, viewOff, dst, src);
+                      dst += tmpView.s[dim];
+                      src += nextStride[dim - view.d.length + 1];
+                    }
+                  } else if (dim == inView) {
+                    for (let i = 0; i < tmpView.d[dim]; ++i) {
+                      let ind = view.t.b[viewOff] as number;
+                      ind = fixInd(ind, nextDims[workingIndex]);
+                      copy(dim + 1, viewOff, dst, src + ind * nextStride[workingIndex]);
+                      dst += tmpView.s[dim];
+                      viewOff += view.s[dim - workingIndex];
+                    }
+                  } else if (dim >= workingIndex) {
+                    for (let i = 0; i < tmpView.d[dim]; ++i) {
+                      copy(dim + 1, viewOff, dst, src);
+                      dst += tmpView.s[dim];
+                      viewOff += view.s[dim - workingIndex];
+                    }
+                  } else {
+                    for (let i = 0; i < tmpView.d[dim]; ++i) {
+                      copy(dim + 1, viewOff, dst, src);
+                      dst += tmpView.s[dim];
+                      src += nextStride[dim];
+                    }
+                  }
+                }
+                copy(0, view.o, 0, nextOffset);
+                nextSrc = tmpView.t;
+                nextDims = tmpView.d;
+                nextStride = tmpView.s;
+                nextOffset = tmpView.o;
+                workingIndex += view.d.length;
               } else if (view.t.t == DataType.Bool) {
                 if (!view.d.length) {
                   nextDims.splice(workingIndex, 0, +view.t.b[view.o]);
@@ -200,12 +245,12 @@ export class NDView<T extends DataType, D extends Dims> {
           }
           const t = step || 1;
           let start = +(part[0] || (step < 0 ? nextDims[workingIndex] - 1 : 0));
-          const s = fixInd(start, nextDims[workingIndex], 1);
+          const s = Math.min(Math.max(fixInd(start, nextDims[workingIndex], 1), 0), nextDims[workingIndex]);
           const e = part[1]
-            ? fixInd(+part[1], nextDims[workingIndex], 1)
+            ? Math.min(Math.max(fixInd(+part[1], nextDims[workingIndex], 1), 0), nextDims[workingIndex])
             : (step < 0 ? -1 : nextDims[workingIndex]);
           nextOffset += s * nextStride[workingIndex];
-          nextDims[workingIndex] = Math.floor(Math[t > 0 ? 'max' : 'min'](e - s, 0) / t);
+          nextDims[workingIndex] = Math.max(Math.floor((e - s) / t), 0)
           nextStride[workingIndex++] *= t;
         }
       }
@@ -283,12 +328,12 @@ export class NDView<T extends DataType, D extends Dims> {
     const target = this[ndvInternals];
     const stringify = (dim: number, ind: number) => {
       if (dim == target.d.length) return target.t.b[ind].toString();
-      let str = '[';
+      let str = '';
       for (let i = 0; i < this.d[dim]; ++i) {
         str += stringify(dim + 1, ind) + ', ';
         ind += target.s[dim];
       }
-      return str.slice(0, -2) + ']';
+      return '[' + str.slice(0, -2) + ']';
     }
     return `ndarray<${dataTypeNames[target.t.t]}>(${target.d.join(', ')}) ${stringify(0, target.o)}`
   }
@@ -301,7 +346,8 @@ export class NDView<T extends DataType, D extends Dims> {
     return this.toString();
   }
 
-  [Symbol.toPrimitive]() {
+  [Symbol.toPrimitive](hint: 'number' | 'string' | 'default') {
+    if (hint == 'number') return NaN;
     const id = getFreeID();
     recentAccesses.set(id, this[ndvInternals]);
     queueMicrotask(() => recentAccesses.delete(id));
@@ -336,7 +382,7 @@ export class NDView<T extends DataType, D extends Dims> {
       }
       
       stride[ne - 1] = cs[e - 1];
-      for (let i = ne - 1; i > ns; --i) stride[i - 1] = stride[i] * cd[i];
+      for (let i = ne - 1; i > ns; --i) stride[i - 1] = stride[i] * dims[i];
       s = e++, ns = ne++;
     }
     return new NDView(target.t, dims, stride, target.o);
@@ -437,5 +483,37 @@ export function array(data: RecursiveArray<unknown>): NDView<DataType> {
   return arr;
 }
 
-// export function arange<N extends number, T extends NumericType = DataType.Float64>(stop: N, dtype?: T): NDView<T, [N]>;
-// export function arange<T extends NumericType = DataType.Float64>(start: number, stop: number, dtype?: T): NDView<T, [N]>;
+export interface ArangeOpts<T extends DataType> {
+  dtype?: T;
+}
+
+export function arange<N extends number, T extends NumericType = DataType.Float64 | DataType.Int32>(stop: N, opts?: ArangeOpts<T>): NDView<T, [N]>;
+export function arange<T extends NumericType = DataType.Float64 | DataType.Int32>(start: number, stop: number, opts?: ArangeOpts<T>): NDView<T, [number]>;
+export function arange<T extends NumericType = DataType.Float64 | DataType.Int32>(start: number, stop: number, step: number, opts?: ArangeOpts<T>): NDView<T, [number]>;
+export function arange<T extends NumericType>(stopOrStart?: number, startOrStopOrOpts?: number | ArangeOpts<T>, stepOrOpts?: number | ArangeOpts<T>, opts?: ArangeOpts<T>) {
+  let start: number, stop: number, step: number, dtype: T
+  if (typeof opts == 'object' || typeof stepOrOpts == 'number') {
+    start = stopOrStart;
+    stop = startOrStopOrOpts as number;
+    step = stepOrOpts as number;
+    dtype = opts && opts.dtype;
+  } else if (typeof stepOrOpts == 'object' || typeof startOrStopOrOpts == 'number') {
+    start = stopOrStart;
+    stop = startOrStopOrOpts as number;
+    step = 1;
+    dtype = stepOrOpts && (stepOrOpts as ArangeOpts<T>).dtype;
+  } else {
+    start = 0;
+    stop = stopOrStart;
+    step = 1;
+    dtype = startOrStopOrOpts && (startOrStopOrOpts as ArangeOpts<T>).dtype;
+  }
+  if (!dtype) {
+    dtype = (Number.isInteger(start) && Number.isInteger(stop) && Number.isInteger(step) ? DataType.Int32 : DataType.Float64) as T;
+  }
+  const len = Math.max(Math.floor((stop - start) / step), 0);
+  const arr = ndarray(dtype, [len] as [number]);
+  const view = arr[ndvInternals];
+  for (let i = start, ind = 0; ind < len; i += step, ++ind) view['t'].b[ind] = i;
+  return arr;
+}
