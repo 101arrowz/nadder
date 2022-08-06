@@ -65,24 +65,53 @@ export const mul = ufunc(
   complexTypeImpl((a, b) => ({ real: a.real * b.real - a.imag * b.imag, imag: a.real * b.imag + a.imag * b.real }))
 );
 
-export const div = ufunc(
-  'div',
+export const floorDiv = ufunc(
+  'floorDiv',
   2,
   1,
-  ...typeImpls((a, b) => a / b, (a, b) => a / b),
+  ...typeImpls((a, b) => Math.floor(a / b), (a, b) => a / b),
   complexTypeImpl((a, b) => {
-    const denom = b.real * b.real + b.imag * b.imag;
+    const denom = Math.hypot(b.real, b.imag);
     return { real: (a.real * b.real + a.imag * b.imag) / denom, imag: (a.imag * b.real - a.real * b.imag) / denom };
   })
 );
 
+export const pow = ufunc(
+  'pow',
+  2,
+  1,
+  ...typeImpls((a, b) => a ** b, (a, b) => a ** b),
+  complexTypeImpl((a, b) => {
+    // TODO
+    throw new TypeError('pow is not implemented for complex numbers');
+  })
+);
+
 export const mod = ufunc(
-  'div',
+  'mod',
   2,
   1,
   ...typeImpls((a, b) => a % b, (a, b) => a % b),
 );
 
+export const abs = ufunc(
+  'abs',
+  1,
+  1,
+  opImpl([[DataType.Bool]] as const, [DataType.Bool] as const, identity),
+  opImpl([[DataType.Int8]] as const, [DataType.Int8] as const, Math.abs),
+  opImpl([[DataType.Uint8]] as const, [DataType.Uint8] as const, Math.abs),
+  opImpl([[DataType.Uint8Clamped]] as const, [DataType.Uint8Clamped] as const, Math.abs),
+  opImpl([[DataType.Int16]] as const, [DataType.Int16] as const, Math.abs),
+  opImpl([[DataType.Uint16]] as const, [DataType.Uint16] as const, Math.abs),
+  opImpl([[DataType.Int32]] as const, [DataType.Int32] as const, Math.abs),
+  opImpl([[DataType.Uint32]] as const, [DataType.Uint32] as const, Math.abs),
+  opImpl([[DataType.Int64]] as const, [DataType.Int64] as const, a => a < 0 ? -a : a),
+  opImpl([[DataType.Uint64]] as const, [DataType.Uint64] as const, a => a < 0 ? -a : a),
+  opImpl([[DataType.Float32]] as const, [DataType.Float32] as const, Math.abs),
+  opImpl([[DataType.Float64]] as const, [DataType.Float64] as const, Math.abs),
+  opImpl([[DataType.Complex]] as const, [DataType.Float64] as const, (a) => +a),
+);
 
 export const conjugate = ufunc(
   'conjugate',
@@ -104,6 +133,60 @@ export const conjugate = ufunc(
 
 export const conj = conjugate;
 
+export const pos = ufunc(
+  'neg',
+  1,
+  1,
+  opImpl([[DataType.Int8]] as const, [DataType.Int8] as const, identity),
+  opImpl([[DataType.Uint8]] as const, [DataType.Uint8] as const, identity),
+  opImpl([[DataType.Uint8Clamped]] as const, [DataType.Uint8Clamped] as const, identity),
+  opImpl([[DataType.Int16]] as const, [DataType.Int16] as const, identity),
+  opImpl([[DataType.Uint16]] as const, [DataType.Uint16] as const, identity),
+  opImpl([[DataType.Int32]] as const, [DataType.Int32] as const, identity),
+  opImpl([[DataType.Uint32]] as const, [DataType.Uint32] as const, identity),
+  opImpl([[DataType.Int64]] as const, [DataType.Int64] as const, identity),
+  opImpl([[DataType.Uint64]] as const, [DataType.Uint64] as const, identity),
+  opImpl([[DataType.Float32]] as const, [DataType.Float32] as const, identity),
+  opImpl([[DataType.Float64]] as const, [DataType.Float64] as const, identity),
+  opImpl([[DataType.Complex]] as const, [DataType.Complex] as const, identity),
+);
+
+const negate = <T extends number | bigint>(a: T) => -a as T;
+
+export const neg = ufunc(
+  'neg',
+  1,
+  1,
+  opImpl([[DataType.Int8]] as const, [DataType.Int8] as const, negate),
+  opImpl([[DataType.Uint8]] as const, [DataType.Uint8] as const, negate),
+  opImpl([[DataType.Uint8Clamped]] as const, [DataType.Uint8Clamped] as const, negate),
+  opImpl([[DataType.Int16]] as const, [DataType.Int16] as const, negate),
+  opImpl([[DataType.Uint16]] as const, [DataType.Uint16] as const, negate),
+  opImpl([[DataType.Int32]] as const, [DataType.Int32] as const, negate),
+  opImpl([[DataType.Uint32]] as const, [DataType.Uint32] as const, negate),
+  opImpl([[DataType.Int64]] as const, [DataType.Int64] as const, negate),
+  opImpl([[DataType.Uint64]] as const, [DataType.Uint64] as const, negate),
+  opImpl([[DataType.Float32]] as const, [DataType.Float32] as const, negate),
+  opImpl([[DataType.Float64]] as const, [DataType.Float64] as const, negate),
+  opImpl([[DataType.Complex]] as const, [DataType.Complex] as const, (a) => ({ real: -a.real, imag: -a.imag })),
+);
+
+export const div = ufunc(
+  'div',
+  2,
+  1,
+  opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32], [DataType.Float32]] as const, [DataType.Int8] as const, (a, b) => +a / b),
+  opImpl([[DataType.Float32], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32]] as const, [DataType.Int8] as const, (a, b) => a / +b),
+  opImpl([
+    [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32, DataType.Int32, DataType.Uint32, DataType.Int64, DataType.Uint64, DataType.Float64],
+    [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32, DataType.Int32, DataType.Uint32, DataType.Int64, DataType.Uint64, DataType.Float64]
+  ] as const, [DataType.Float64] as const, (a, b) => Number(a) / Number(b)),
+  complexTypeImpl((a, b) => {
+    const denom = Math.hypot(b.real, b.imag);
+    return { real: (a.real * b.real + a.imag * b.imag) / denom, imag: (a.imag * b.real - a.real * b.imag) / denom };
+  })
+);
+
 const floatTypeImpls = (impl: (a: number) => number, complexImpl: (a: Complex) => Complex) => {
   const fixedSmallImpl = (a: number | boolean | bigint) => {
     if (typeof a == 'bigint') a = Number(a);
@@ -120,6 +203,21 @@ const floatTypeImpls = (impl: (a: number) => number, complexImpl: (a: Complex) =
   ] as const;
 };
 
+const complexSqrt = (a: Complex) => {
+  const l = Math.hypot(a.real, a.imag);
+  return {
+    real: Math.sqrt((l + a.real) / 2),
+    imag: Math.sign(a.imag) * Math.sqrt((l - a.real) / 2)
+  };
+};
+
+export const sqrt = ufunc(
+  'sqrt',
+  1,
+  1,
+  ...floatTypeImpls(Math.sqrt, complexSqrt)
+);
+
 export const exp = ufunc(
   'exp',
   1,
@@ -130,19 +228,27 @@ export const exp = ufunc(
   })
 );
 
+export const exp2 = ufunc(
+  'exp2',
+  1,
+  1,
+  ...floatTypeImpls(a => 2 ** a, a => {
+    const base = 2 ** a.real;
+    const rad = a.imag * Math.LN2;
+    return { real: base * Math.cos(rad), imag: base * Math.sin(rad) };
+  })
+);
+
 export const expm1 = ufunc(
   'expm1',
   1,
   1,
   ...floatTypeImpls(Math.expm1, a => {
-    const base = Math.expm1(a.real);
-    return { real: base * Math.cos(a.imag), imag: base * Math.sin(a.imag) };
+    // This loses precision if a.real and a.imag are near 0 - possible TODO
+    // Though expm1 probably shouldn't be used for complex numbers anyway
+    return { real: Math.exp(a.real) * Math.cos(a.imag) - 1, imag: Math.exp(a.real) * Math.sin(a.imag) };
   })
 );
-
-const complexSqrt = (a: Complex) => {
-
-}
 
 export const sin = ufunc(
   'sin',

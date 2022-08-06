@@ -451,9 +451,6 @@ export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | Data
   return new NDView<T, D>(src, dimensions, stride, 0);
 }
 
-type RecursiveArray<T> = T | RecursiveArray<T>[];
-
-
 const recurseFind = (data: RecursiveArray<unknown>): [number[], DataType] => {
   if (Array.isArray(data)) {
     if (data.length == 0) return [[0], DataType.Any];
@@ -467,6 +464,8 @@ const recurseFind = (data: RecursiveArray<unknown>): [number[], DataType] => {
   return [[], guessType(data)];
 }
 
+export type RecursiveArray<T> = T | RecursiveArray<T>[];
+
 export function array(data: RecursiveArray<number>): NDView<DataType.Int32 | DataType.Float64>;
 export function array(data: RecursiveArray<bigint>): NDView<DataType.Int64>;
 export function array(data: RecursiveArray<string>): NDView<DataType.String>;
@@ -476,6 +475,7 @@ export function array(data: RecursiveArray<unknown>): NDView<DataType.Any>;
 export function array(data: RecursiveArray<unknown>): NDView<DataType> {
   const [dims, type] = recurseFind(data);
   const flat = Array.isArray(data) ? data.flat(Infinity) : [data];
+  // potentially optimizable
   const arr = ndarray(type, dims);
   for (let i = 0; i < flat.length; ++i) {
     arr['t'].b[i] = flat[i];
@@ -487,7 +487,7 @@ export interface ArangeOpts<T extends DataType> {
   dtype?: T;
 }
 
-export function arange<N extends number, T extends NumericType = DataType.Float64 | DataType.Int32>(stop: N, opts?: ArangeOpts<T>): NDView<T, [N]>;
+export function arange<N extends number, T extends NumericType = DataType.Int32>(stop: N, opts?: ArangeOpts<T>): NDView<T, [N]>;
 export function arange<T extends NumericType = DataType.Float64 | DataType.Int32>(start: number, stop: number, opts?: ArangeOpts<T>): NDView<T, [number]>;
 export function arange<T extends NumericType = DataType.Float64 | DataType.Int32>(start: number, stop: number, step: number, opts?: ArangeOpts<T>): NDView<T, [number]>;
 export function arange<T extends NumericType>(stopOrStart?: number, startOrStopOrOpts?: number | ArangeOpts<T>, stepOrOpts?: number | ArangeOpts<T>, opts?: ArangeOpts<T>) {

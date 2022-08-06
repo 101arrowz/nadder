@@ -3,7 +3,7 @@ Easy n-dimensional data manipulation with NumPy syntax.
 
 ## Usage
 ```js
-import { ndarray, array, add } from 'nadder';
+import { ndarray, array, add, evaluate, arange } from 'nadder';
 
 const dataSource = new Float32Array(1_000_000);
 // load data into dataSource manually here...
@@ -32,19 +32,25 @@ const boolIndex = array(leapYears);
 
 console.log(t[`..., ${boolIndex}`]);
 
-// ufuncs supported through explicit syntax
+// You can evaluate things using a Python-esque DSL
+console.log(evaluate`${t}[:, 0] * 2 + 1 / ${arange(1000)}`)
+
+// ufuncs also supported through explicit syntax
 // broadcasting, typecasting done automatically
-console.log(add(t, boolIndex))
+console.log(add(t, boolIndex));
 ```
 
 ## Features
 - Ergonomic NumPy slicing, broadcasting
+  - 
+- NumPy syntax and evaluation via `evaluate`
+  - Full support for arithmetic, advanced ops, etc.
 - Performant view-based manipulation; minimal copying
 - Fast bitset-backed boolean ndarrays
 - Interleaved complex numbers
-- Arithmetic + algebraic operators for real, complex numbers
-- Correct TypeScript typings
-- In progress: support for most NumPy manipulations, more fast paths for higher performance, opt-in WASM modules
+- Arithmetic, algebraic, and trigonometric operators for real and complex numbers
+- Full TypeScript support
+- In progress: support for most NumPy manipulations, more fast paths for higher performance, fast WASM modules
 
 ### Limitations
 - No direct Fortran (column-major) memory layout support

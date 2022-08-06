@@ -1,19 +1,15 @@
-import { NDView, ndarray } from '../core/ndarray';
-import { DataType, guessType, IndexType } from '../core/datatype';
+import { NDView, RecursiveArray, array } from '../core/ndarray';
+import { DataType, IndexType } from '../core/datatype';
 import { ndvInternals } from './internal';
 
-type Broadcastable<T extends DataType[]> = { [I in keyof T]: NDView<T[I]> | IndexType<T[I]> };
+type Broadcastable<T extends DataType[]> = { [I in keyof T]: NDView<T[I]> | RecursiveArray<IndexType<T[I]>> };
 type Broadcast<T extends DataType[]> = { [I in keyof T]: NDView<T[I]> };
 
 export function broadcast<T extends DataType[]>(...views: Broadcastable<T>) {
   if (views.length < 2) return views as Broadcast<T>;
   let maxDims = 0;
   const allInfo = views.map(v => {
-    if (!v[ndvInternals]) {
-      const nd = ndarray(guessType(v), []);
-      nd['t'].b[0] = v;
-      v = nd;
-    }
+    if (!v[ndvInternals]) v = array(v);
     if (v['d'].length > maxDims) maxDims = v['d'].length;
     return {
       v: v as NDView,
@@ -22,7 +18,7 @@ export function broadcast<T extends DataType[]>(...views: Broadcastable<T>) {
     };
   });
   for (let i = 0; i < maxDims; ++i) {
-    const target = allInfo.find(v => i < v.d.length && v.d[i] != 1);
+    const target = allInfo.find(v => i < v.d.length && v.d[i] != 1) || allInfo.find(v => i < v.d.length);
     for (const info of allInfo) {
       if (i >= info.d.length || info.d[i] == 1) {
         info.d[i] = target.d[i];

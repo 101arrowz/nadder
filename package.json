@@ -1,6 +1,6 @@
 {
   "name": "nadder",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "ndarray/tensor data processing for modern browsers",
   "main": "lib/index.js",
   "module": "esm/index.js",

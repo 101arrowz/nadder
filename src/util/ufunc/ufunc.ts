@@ -1,13 +1,11 @@
-import { Dims, ndarray, NDView } from '../../core/ndarray';
+import { Dims, ndarray, NDView, RecursiveArray } from '../../core/ndarray';
 import { DataType, dataTypeNames, IndexType } from '../../core/datatype';
 import { broadcast } from '../broadcast';
-import { Bitset } from '../containers';
 import { ndvInternals } from '../internal';
 
 type MultiType = readonly DataType[];
 type MultiTypeArgs = readonly MultiType[];
 
-type AnyDataType<T extends MultiType> = IndexType<T[number]>;
 type OpReturnType<T extends MultiType> = '1' extends keyof T ? [...({ [K in keyof T]: IndexType<T[K]> })] : IndexType<T[0]>;
 type OpArgs<T extends MultiTypeArgs> = [...({ [I in keyof T]: IndexType<T[I][number]> })];
 type OpImpl<T extends MultiTypeArgs, TR extends MultiType> = readonly [args: T, result: TR, impl: (...args: OpArgs<T>) => OpReturnType<TR>];
@@ -19,7 +17,7 @@ type UfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataTyp
   where?: NDView<DataType.Bool, D> | boolean;
   dtype?: TF;
 } | UfuncReturnType<TR, TF, D>;
-type UfuncArgs<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =  [...args: ({ [I in keyof T]: NDView<T[I][number], D> | AnyDataType<T[I]> }), opts: UfuncOpts<T, TR, TF, D> | void];
+type UfuncArgs<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =  [...args: ({ [I in keyof T]: NDView<T[I][number], D> | RecursiveArray<IndexType<T[I][number]>> }), opts: UfuncOpts<T, TR, TF, D> | void];
 type UfuncSig<T> = T extends OpImpl<infer T, infer TR> ? (<D extends Dims, TF extends DataType>(...args: UfuncArgs<T, TR, TF, D>) => UfuncReturnType<TR, TF, D>) : never;
 type UnionToIntersection<U> =  (U extends unknown ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
 type Ufuncify<Tuple extends readonly unknown[]> = UnionToIntersection<{ [Index in keyof Tuple]: UfuncSig<Tuple[Index]> }[number]>;
