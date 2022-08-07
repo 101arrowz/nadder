@@ -388,6 +388,24 @@ export class NDView<T extends DataType, D extends Dims> {
     return new NDView(target.t, dims, stride, target.o);
   }
 
+  transpose(order: number[]) {
+    const target = (this[ndvInternals] || this);
+    if (order.length != target.d.length) {
+      throw new TypeError(`order length ${order.length} does not match data dimensions (${target.d.join(', ')})`);
+    }
+    const newDims: number[] = [];
+    const newStrides: number[] = [];
+    const seen = new Set<number>();
+    for (let ord of order) {
+      ord = fixInd(ord, target.d.length);
+      if (seen.has(ord)) throw new TypeError(`repeated axis ${ord} in transpose`);
+      seen.add(ord);
+      newStrides.push(target.s[ord]);
+      newDims.push(target.d[ord]);
+    }
+    return new NDView(target.t, newDims, newStrides, target.o);
+  }
+
   flatten() {
     const target = (this[ndvInternals] || this);
     const ret = ndarray(target.t.t, [target.size] as [number]);
