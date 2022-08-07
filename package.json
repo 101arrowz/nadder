@@ -1,13 +1,24 @@
 {
   "name": "nadder",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "ndarray/tensor data processing for modern browsers",
+  "keywords": ["ndarray", "tensor", "numpy", "stdlib", "matlab"],
+  "author": "Arjun Barrett",
+  "homepage": "https://github.com/101arrowz/nadder",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/101arrowz/nadder"
+  },
+  "bugs": {
+    "url": "https://github.com/101arrowz/nadder/issues",
+    "email": "arjunbarrett@gmail.com"
+  },
   "main": "lib/index.js",
   "module": "esm/index.js",
-  "types": "lib/index.d.ts",
-  "author": "Arjun Barrett",
+  "types": "lib/index.d.ts",  
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json && node scripts/postbuild"
+    "build": "tsc && tsc -p tsconfig.esm.json && node scripts/postbuild",
+    "prepare": "yarn build"
   },
   "devDependencies": {
     "typescript": "^4.7.4"

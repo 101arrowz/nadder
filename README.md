@@ -1,6 +1,11 @@
 # nadder
 Easy n-dimensional data manipulation with NumPy syntax.
 
+## Installation
+```sh
+npm i nadder # or yarn add nadder, or pnpm add nadder
+```
+
 ## Usage
 ```js
 import { ndarray, array, add, evaluate, arange } from 'nadder';
@@ -42,13 +47,14 @@ console.log(add(t, boolIndex));
 
 ## Features
 - Ergonomic NumPy slicing, broadcasting
-  - 
+  - All NumPy bracket syntax and indexing routines supported
 - NumPy syntax and evaluation via `evaluate`
   - Full support for arithmetic, advanced ops, etc.
+- Tiny: 20kB minified, 8kB gzipped
 - Performant view-based manipulation; minimal copying
 - Fast bitset-backed boolean ndarrays
 - Interleaved complex numbers
-- Arithmetic, algebraic, and trigonometric operators for real and complex numbers
+- Arithmetic, algebraic, and trigonometric operations for real and complex numbers
 - Full TypeScript support
 - In progress: support for most NumPy manipulations, more fast paths for higher performance, fast WASM modules
 
