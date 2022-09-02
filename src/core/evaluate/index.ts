@@ -1,5 +1,11 @@
 import { ndvInternals } from '../../util';
-import * as ops from '../../util/ufunc/ops';
+import * as ufuncOps from '../../util/ufunc/ops';
+import { matmul } from '../../util';
+
+const ops = {
+  ...ufuncOps,
+  matmul
+}
 
 declare const enum TokenType {
   Operator = 0,
@@ -39,6 +45,7 @@ export function evaluate(strings: TemplateStringsArray, ...args: unknown[]) {
       case '-':
       case '/':
       case '%':
+      case '@':
         tokens.push({ t: TokenType.Operator, v: char });
         curInput = curInput.slice(1);
         break;
@@ -235,6 +242,10 @@ export function evaluate(strings: TemplateStringsArray, ...args: unknown[]) {
         case '%':
           tokens.shift();
           left = ops.mod(left, powExpr());
+          break;
+        case '@':
+          tokens.shift();
+          left = ops.matmul(left, powExpr());
           break;
         default: return left;
       }
