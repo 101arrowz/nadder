@@ -1,10 +1,21 @@
 import { ndvInternals } from '../../util';
 import * as ufuncOps from '../../util/ufunc/ops';
 import { matmul } from '../../util';
+import { arange, NDView } from '../ndarray';
 
 const ops = {
   ...ufuncOps,
-  matmul
+  matmul,
+  arange,
+  reshape: (arr: NDView, ...args: [number[]]) => {
+    if (!arr || !arr[ndvInternals]) {
+      throw new TypeError('cannot reshape non-ndarray')
+    }
+    if (args.length > 1) {
+      throw new TypeError('must use array for dimensions in free function reshape');
+    }
+    return arr.reshape(args[0]);
+  }
 }
 
 declare const enum TokenType {
@@ -69,14 +80,18 @@ export function evaluate(strings: TemplateStringsArray, ...args: unknown[]) {
         }
       default:
         const code = char.charCodeAt(0);
-        // 1-9
-        if (code > 47 && code < 58) {
+        // 0-9, or point
+        if (code == 46 || (code > 47 && code < 58)) {
           let num = char;
+          let seenPoint = code == 46;
           let ind = 1;
           while (ind < curInput.length) {
             const newCode = curInput.charCodeAt(ind);
             // 0-9
-            if (newCode < 48 || newCode > 57) break;
+            if (newCode < 48 || newCode > 57) {
+              if (newCode != 46 || seenPoint) break;
+              seenPoint = true;
+            };
             num += curInput[ind++];
           }
           if (num.length > 1 && code == 48) {

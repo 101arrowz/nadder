@@ -49,7 +49,8 @@ console.log(add(t, boolIndex));
 - Ergonomic NumPy slicing, broadcasting
   - All NumPy bracket syntax and indexing routines supported
 - NumPy syntax and evaluation via `evaluate`
-  - Full support for arithmetic, advanced ops, etc.
+  - Full support for most numeric operations
+- Matrix manipulation and `matmul`
 - Tiny: 20kB minified, 8kB gzipped
 - Performant view-based manipulation; minimal copying
 - Fast bitset-backed boolean ndarrays

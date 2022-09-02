@@ -100,9 +100,9 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT
   }
   
   if (b.ndim > a.ndim) {
-    a = new NDView(a['t'], [...b['d'].slice(0, b.ndim - a.ndim), ...a['d']], [...b['s'].slice(0, b.ndim - a.ndim), ...a['s']], a['o'])[ndvInternals]
+    a = new NDView(a['t'], [...b['d'].slice(0, b.ndim - a.ndim), ...a['d']], [...b['s'].slice(0, b.ndim - a.ndim).map(() => 0), ...a['s']], a['o'])[ndvInternals]
   } else if (a.ndim > b.ndim){
-    b = new NDView(b['t'], [...a['d'].slice(0, a.ndim - b.ndim), ...b['d']], [...a['s'].slice(0, a.ndim - b.ndim), ...b['s']], b['o'])[ndvInternals]
+    b = new NDView(b['t'], [...a['d'].slice(0, a.ndim - b.ndim), ...b['d']], [...a['s'].slice(0, a.ndim - b.ndim).map(() => 0), ...b['s']], b['o'])[ndvInternals]
   }
 
   const shape = [...a['d'].slice(0, -1), b['d'][b.ndim - 1]];

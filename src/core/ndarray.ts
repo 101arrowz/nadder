@@ -366,19 +366,35 @@ export class NDView<T extends DataType, D extends Dims> {
   }
 
   [Symbol.toPrimitive](hint: 'number' | 'string' | 'default') {
-    if (hint == 'number') return NaN;
+    if (hint == 'number') return this.ndim ? NaN : this.t.b[this.o];
     const id = getFreeID();
     recentAccesses.set(id, this[ndvInternals]);
     queueMicrotask(() => recentAccesses.delete(id));
     return `${indexablePrefix}${zws.repeat(id)}<${dataTypeNames[this.t.t]}>(${this.d.join('x')}) [...]`;
   }
 
-  reshape<ND extends Dims>(...dims: ND): NDView<T, ND>;
   reshape<ND extends Dims>(dims: ND): NDView<T, ND>;
+  reshape<ND extends Dims>(...dims: ND): NDView<T, ND>;
   reshape<ND extends Dims>(...maybeDims: ND | [ND]): NDView<T, ND> {
     let dims = (Array.isArray(maybeDims[0]) ? maybeDims[0] : maybeDims) as ND;
     const target = (this[ndvInternals] || this), size = target.size;
-    if (dims.reduce((a, b) => a * b, 1) != size) {
+    if (dims.some(v => !Number.isInteger(v))) {
+      throw new TypeError(`cannot reshape to non-integral dimensions (${dims.join(', ')})`)
+    }
+    let calcSize = dims.reduce((a, b) => a * b, 1);
+    let negInd = dims.findIndex(a => a < 0);
+    if (negInd > -1) {
+      if (dims.slice(negInd + 1).findIndex(a => a < 0) > -1) {
+        throw new TypeError('can only specify one unknown dimension');
+      }
+      let spareDim = size * dims[negInd] / calcSize;
+      if (Number.isInteger(spareDim)) {
+        dims = dims.slice() as unknown as ND;
+        (dims as unknown as number[])[negInd] = spareDim;
+        calcSize = size;
+      }
+    }
+    if (calcSize != size) {
       throw new TypeError(`dimensions (${dims.join(', ')}) do not match data length ${size}`);
     }
     const cd: number[] = [], cs: number[] = [], stride: number[] = dims.map(() => 0);
@@ -410,10 +426,13 @@ export class NDView<T extends DataType, D extends Dims> {
     return new NDView(target.t, dims, stride, target.o);
   }
 
-  transpose(order?: number[]) {
+  transpose(order?: readonly number[]): NDView<T>;
+  transpose(...order: readonly number[]): NDView<T>;
+  transpose(...maybeOrder: unknown[]) {
+    let order = (!maybeOrder.length || Array.isArray(maybeOrder[0]) ? maybeOrder[0] : maybeOrder) as Dims;
     const target = (this[ndvInternals] || this);
     if (!order) {
-      order = this.d.slice().reverse();
+      order = this.d.map((_, i) => -i - 1);
     } else if (order.length != target.ndim) {
       throw new TypeError(`order length ${order.length} does not match data dimensions (${target.d.join(', ')})`);
     }
@@ -487,6 +506,9 @@ export function ndarray<D extends Dims>(data: BigUint64Array, dimensions: D): ND
 export function ndarray<D extends Dims>(data: unknown[], dimensions: D): NDView<DataType.Any, D>;
 export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | DataTypeBuffer<T>, dimensions: D): NDView<T, D>;
 export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | DataTypeBuffer<T>, dimensions: D) {
+  if (dimensions.some(d => !Number.isInteger(d))) {
+    throw new TypeError(`cannot reshape to non-integral dimensions (${dimensions.join(', ')})`)
+  }
   const size = dimensions.reduce((a, b) => a * b, 1);
   const src = new FlatArray(dataOrType, size);
   if (src.b.length != size) {
