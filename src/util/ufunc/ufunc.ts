@@ -1,7 +1,7 @@
 import { Dims, ndarray, NDView, RecursiveArray } from '../../core/ndarray';
 import { DataType, dataTypeNames, IndexType } from '../../core/datatype';
 import { broadcast } from '../broadcast';
-import { ndvInternals } from '../internal';
+import { makeOut, ndvInternals, UnionToIntersection } from '../internal';
 
 type MultiType = readonly DataType[];
 type MultiTypeArgs = readonly MultiType[];
@@ -19,7 +19,6 @@ type UfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataTyp
 } | UfuncReturnType<TR, TF, D>;
 type UfuncArgs<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =  [...args: ({ [I in keyof T]: NDView<T[I][number], D> | RecursiveArray<IndexType<T[I][number]>> }), opts: UfuncOpts<T, TR, TF, D> | void];
 type UfuncSig<T> = T extends OpImpl<infer T, infer TR> ? (<D extends Dims, TF extends DataType>(...args: UfuncArgs<T, TR, TF, D>) => UfuncReturnType<TR, TF, D>) : never;
-type UnionToIntersection<U> =  (U extends unknown ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
 type Ufuncify<Tuple extends readonly unknown[]> = UnionToIntersection<{ [Index in keyof Tuple]: UfuncSig<Tuple[Index]> }[number]>;
 
 export const opImpl = <T extends MultiTypeArgs, TR extends MultiType>(args: T, result: TR, impl: (...args: OpArgs<T>) => OpReturnType<TR>): OpImpl<T, TR> =>
@@ -32,8 +31,8 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
   // assertion: nin > 0, nout > 0, impls.every(([args, result, impl]) => args.length == nin && result.length == nout)
   return ((...args: UfuncArgs<MultiTypeArgs, MultiType, DataType, Dims>) => {
     if (args.length > nin + 1 || args.length < nin) throw new TypeError(`${name} takes ${nin} arguments and optional arguments; got ${args.length} arguments`);
-    let opts = (args.length > nin ? args.pop() : {}) as UfuncOpts<MultiTypeArgs, MultiType, DataType, Dims>;
-    if (nout > 1 ? Array.isArray(opts) && opts.every(o => o[ndvInternals]) : opts[ndvInternals]) {
+    let opts = (args.length > nin && args.pop() || {}) as UfuncOpts<MultiTypeArgs, MultiType, DataType, Dims>;
+    if (nout > 1 ? Array.isArray(opts) && opts.every(o => o && o[ndvInternals]) : opts[ndvInternals]) {
       opts = { out: opts as NDView };
     }
     let { where = true, out, dtype } = opts;
@@ -53,13 +52,13 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
         }
         for (let i = 0; i < out.length; ++i) {
           const curout = out[i] as NDView;
-          if (!curout[ndvInternals]) {
+          if (!curout || !curout[ndvInternals]) {
             throw new TypeError(`${name} expected output ${i + 1} to be an ndarray`);
           }
           if (curout['t'].t != dtype) {
             throw new TypeError(`${name} expected output ${i + 1} to have type ${dataTypeNames[dtype]} but got ${dataTypeNames[curout['t'].t]}`);
           }
-          if (curout['d'].length != dims.length || curout['d'].some((v, i) => dims[i] != v)) {
+          if (curout.ndim != dims.length || curout['d'].some((v, i) => dims[i] != v)) {
             throw new TypeError(`${name} expected broadcast shape (${dims.join(', ')}) to match output ${i + 1} shape (${curout['d'].join(', ')})`);
           }
         }
@@ -85,17 +84,7 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
       call(0);
       return dims.length ? out : (out as unknown as NDView[]).map(o => o['t'].b[o['o']]);
     } else {
-      if (out) {
-        if (!out[ndvInternals]) {
-          throw new TypeError(`${name} expected out to be an ndarray`);
-        }
-        if (out['t'].t != dtype) {
-          throw new TypeError(`${name} expected out to have type ${dataTypeNames[dtype]} but got ${dataTypeNames[out['t'].t]}`);
-        }
-        if (out['d'].length != dims.length || out['d'].some((v, i) => dims[i] != v)) {
-          throw new TypeError(`${name} expected broadcast shape (${dims.join(', ')}) to match output shape (${out['d'].join(', ')})`);
-        }
-      } else out = ndarray(dtype, dims);
+      out = makeOut(name, dims, dtype, out);
       const assign = out[ndvInternals];
       if (nin == 2) {
         const [in0, in1] = inputs;

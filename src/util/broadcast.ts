@@ -2,19 +2,19 @@ import { NDView, RecursiveArray, array } from '../core/ndarray';
 import { DataType, IndexType } from '../core/datatype';
 import { ndvInternals } from './internal';
 
-type Broadcastable<T extends DataType[]> = { [I in keyof T]: NDView<T[I]> | RecursiveArray<IndexType<T[I]>> };
+export type Broadcastable<T extends DataType> = NDView<T> | RecursiveArray<IndexType<T>>;
 type Broadcast<T extends DataType[]> = { [I in keyof T]: NDView<T[I]> };
 
-export function broadcast<T extends DataType[]>(...views: Broadcastable<T>) {
+export function broadcast<T extends DataType[]>(...views: { [I in keyof T]: Broadcastable<T[I]> }) {
   if (views.length < 2) return views as Broadcast<T>;
   let maxDims = 0;
   const allInfo = views.map(v => {
-    if (!v[ndvInternals]) v = array(v);
-    if (v['d'].length > maxDims) maxDims = v['d'].length;
+    if (!v || !v[ndvInternals]) v = array(v);
+    if (v['ndim'] > maxDims) maxDims = v['ndim'];
     return {
       v: v as NDView,
-      d: v['d'].slice().reverse(),
-      s: v['s'].slice().reverse()
+      d: v['d'].slice().reverse() as number[],
+      s: v['s'].slice().reverse() as number[]
     };
   });
   for (let i = 0; i < maxDims; ++i) {

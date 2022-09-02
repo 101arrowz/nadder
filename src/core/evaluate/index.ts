@@ -134,7 +134,7 @@ export function evaluate(strings: TemplateStringsArray, ...args: unknown[]) {
         return tryCall(val, args);
       } else if (bracket.v == '[') {
         // slice index
-        if (!val[ndvInternals]) throw new TypeError(`attempted to index non-ndarray ${val}`);
+        if (!val || !val[ndvInternals]) throw new TypeError(`attempted to index non-ndarray ${val}`);
         let sliceStr = '';
         while (cur().t != TokenType.Bracket || cur().v != ']') {
           // hack for np.newaxis (+)
@@ -221,20 +221,20 @@ export function evaluate(strings: TemplateStringsArray, ...args: unknown[]) {
   };
 
   const mulExpr = () => {
-    let left = unit();
+    let left = powExpr();
     while (tokens[0] && tokens[0].t == TokenType.Operator) {
       switch (tokens[0].v) {
         case '*':
           tokens.shift();
-          left = ops.mul(left, unit());
+          left = ops.mul(left, powExpr());
           break;
         case '/':
           tokens.shift();
-          left = ops.div(left, unit());
+          left = ops.div(left, powExpr());
           break;
         case '%':
           tokens.shift();
-          left = ops.mod(left, unit());
+          left = ops.mod(left, powExpr());
           break;
         default: return left;
       }

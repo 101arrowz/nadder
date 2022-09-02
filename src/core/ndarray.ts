@@ -1,6 +1,6 @@
-import { DataType, DataTypeBuffer, dataTypeNames, dataTypeBufferMap, IndexType, isAssignable, bestGuess, guessType, AssignableType, NumericType } from './datatype';
+import { DataType, DataTypeBuffer, dataTypeNames, IndexType, isAssignable, bestGuess, guessType, AssignableType, NumericType } from './datatype';
 import { FlatArray } from './flatarray';
-import { Bitset, Complex, ComplexArray, StringArray, ndvInternals, broadcast } from '../util';
+import { Bitset, Complex, ComplexArray, StringArray, ndvInternals, broadcast, Broadcastable } from '../util';
 
 export type Dims = readonly number[];
 
@@ -84,7 +84,7 @@ export class NDView<T extends DataType, D extends Dims> {
                   const view = recentAccesses.get(id);
                   if (view) {
                     if (view.t.t <= DataType.Uint32) workingIndex -= 1;
-                    else if (view.t.t == DataType.Bool) workingIndex -= view.d.length;
+                    else if (view.t.t == DataType.Bool) workingIndex -= view.ndim;
                     else {
                       throw new TypeError(`cannot index ndarray with ndarray of type ${dataTypeNames[view.t.t]}`);
                     }
@@ -113,7 +113,7 @@ export class NDView<T extends DataType, D extends Dims> {
               recentAccesses.delete(id);
               if (view.t.t <= DataType.Uint32) {
                 if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0D ndarray');
-                if (!view.d.length) {
+                if (!view.ndim) {
                   let ind = view.t.b[view.o] as number;
                   ind = fixInd(ind, nextDims.splice(workingIndex, 1)[0]);
                   nextOffset += ind * nextStride.splice(workingIndex, 1)[0];
@@ -121,7 +121,7 @@ export class NDView<T extends DataType, D extends Dims> {
                 }
                 const preDims = nextDims.slice(0, workingIndex);
                 const postDims = nextDims.slice(workingIndex + 1);
-                const inView = workingIndex + view.d.length - 1;
+                const inView = workingIndex + view.ndim - 1;
                 const tmpView = ndarray(nextSrc.t, [...preDims, ...view.d, ...postDims]);
                 const copy = (dim: number, viewOff: number, dst: number, src: number) => {
                   if (dim == tmpView.d.length) {
@@ -159,9 +159,9 @@ export class NDView<T extends DataType, D extends Dims> {
                 nextDims = tmpView.d;
                 nextStride = tmpView.s;
                 nextOffset = tmpView.o;
-                workingIndex += view.d.length;
+                workingIndex += view.ndim;
               } else if (view.t.t == DataType.Bool) {
-                if (!view.d.length) {
+                if (!view.ndim) {
                   nextDims.splice(workingIndex, 0, +view.t.b[view.o]);
                   nextStride.splice(workingIndex, 0, 0);
                   workingIndex++;
@@ -170,10 +170,10 @@ export class NDView<T extends DataType, D extends Dims> {
                 if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0D ndarray');
                 const preDims = nextDims.slice(0, workingIndex);
                 const workingDims = nextDims.slice(workingIndex);
-                if (view.d.length > workingDims.length || view.d.some((v, i) => workingDims[i] != v)) {
-                  throw new TypeError(`incompatible dimensions: expected (${workingDims.slice(0, view.d.length).join(', ')}), found (${view.d.join(', ')})`);
+                if (view.ndim > workingDims.length || view.d.some((v, i) => workingDims[i] != v)) {
+                  throw new TypeError(`incompatible dimensions: expected (${workingDims.slice(0, view.ndim).join(', ')}), found (${view.d.join(', ')})`);
                 }
-                const postDims = workingDims.slice(view.d.length);
+                const postDims = workingDims.slice(view.ndim);
                 const trueOffsets: number[] = [];
                 const collect = (dim: number, ind: number, viewInd: number) => {
                   if (dim == view.d.length) {
@@ -261,11 +261,14 @@ export class NDView<T extends DataType, D extends Dims> {
     return new Proxy(this, {
       get: (target, key) => get(target, key, 1),
       set: (target, key, value) => {
-        if (typeof key == 'symbol' || (!key.includes(':') && isNaN(+key))) {
-          target[key as string] = value;
-        } else {
-          (get(target, key) as NDView<T, Dims>).set(value);
+        if (typeof key == 'string' && key.includes(indexablePrefix)) {
+          throw new TypeError(
+            'setting values through a mask is unsupported: try calling .set() after indexing (will not affect original)'
+          );
         }
+        const val = (get(target, key) as NDView<T, Dims>);
+        if (val && val[ndvInternals]) val.set(value);
+        else target[key as string] = value;
         return true;
       }
     });
@@ -280,8 +283,8 @@ export class NDView<T extends DataType, D extends Dims> {
 
   *[Symbol.iterator]() {
     const target = this[ndvInternals];
-    if (!target.d.length) throw new TypeError('cannot iterate over scalar');
-    if (target.d.length == 1) {
+    if (!target.ndim) throw new TypeError('cannot iterate over scalar');
+    if (target.ndim == 1) {
       for (let i = 0; i < target.d[0]; ++i) {
         yield target.t.b[target.o + i * target.s[0]] as NDViewChild<T, D>;
       }
@@ -293,13 +296,14 @@ export class NDView<T extends DataType, D extends Dims> {
     }
   }
 
-  set(value: NDView<AssignableType<T>> | IndexType<AssignableType<T>>) {
+  set(value: Broadcastable<AssignableType<T>>) {
     const [target, val] = broadcast(this, value);
     if (!isAssignable(target.t.t, val.t.t)) {
       throw new TypeError(`cannot assign to ndarray of type ${dataTypeNames[val.t.t]} to ${dataTypeNames[target.t.t]}`);
     }
-    if (target.d.filter(v => v != 1).length != this.d.length) {
-      throw new TypeError(`cannot broadcast ndarray of shape (${value[ndvInternals] ? (value as NDView).d.join(', ') : ''}) to (${target.d.join(', ')})`);
+    if (target.d.filter(v => v != 1).length != this.ndim) {
+      const shape = (a: unknown): number[] => Array.isArray(a) ? [a.length, ...shape(a[0])]  : [];
+      throw new TypeError(`cannot broadcast ndarray of shape (${value && value[ndvInternals] ? (value as NDView).d.join(', ') : shape(value)}) to (${target.d.join(', ')})`);
     }
     const set = (dim: number, ind: number, valInd: number) => {
       if (dim == target.d.length) target.t.b[ind] = val.t.b[valInd];
@@ -324,6 +328,17 @@ export class NDView<T extends DataType, D extends Dims> {
     set(0, target.o, val.o);
   }
 
+  get(...index: number[]) {
+    if (index.length != this.ndim) {
+      throw new TypeError(`index of size ${index.length} cannot be used on ndarray with ${this.ndim} dimensions`);
+    }
+    let o = this.o;
+    for (let i = 0; i < index.length; ++i) {
+      o += fixInd(index[i], this.d[i]) * this.s[i];
+    }
+    return this.t.b[o];
+  }
+
   toString() {
     const target = this[ndvInternals];
     const stringify = (dim: number, ind: number) => {
@@ -338,8 +353,12 @@ export class NDView<T extends DataType, D extends Dims> {
     return `ndarray<${dataTypeNames[target.t.t]}>(${target.d.join(', ')}) ${stringify(0, target.o)}`
   }
 
-  raw(): DataTypeBuffer<T> {
-    return this.flatten().t.b;
+  ravel() {
+    return this.reshape([this.size]);
+  }
+
+  toRaw(): DataTypeBuffer<T> {
+    return this.ravel().t.b;
   }
 
   [Symbol.for('nodejs.util.inspect.custom')]() {
@@ -354,13 +373,16 @@ export class NDView<T extends DataType, D extends Dims> {
     return `${indexablePrefix}${zws.repeat(id)}<${dataTypeNames[this.t.t]}>(${this.d.join('x')}) [...]`;
   }
 
-  reshape<ND extends Dims>(dims: ND): NDView<T, ND> {
+  reshape<ND extends Dims>(...dims: ND): NDView<T, ND>;
+  reshape<ND extends Dims>(dims: ND): NDView<T, ND>;
+  reshape<ND extends Dims>(...maybeDims: ND | [ND]): NDView<T, ND> {
+    let dims = (Array.isArray(maybeDims[0]) ? maybeDims[0] : maybeDims) as ND;
     const target = (this[ndvInternals] || this), size = target.size;
     if (dims.reduce((a, b) => a * b, 1) != size) {
       throw new TypeError(`dimensions (${dims.join(', ')}) do not match data length ${size}`);
     }
     const cd: number[] = [], cs: number[] = [], stride: number[] = dims.map(() => 0);
-    for (let i = 0; i < target.d.length; ++i) {
+    for (let i = 0; i < target.ndim; ++i) {
       if (target.d[i] != 1) {
         cd.push(target.d[i]);
         cs.push(target.s[i]);
@@ -388,16 +410,18 @@ export class NDView<T extends DataType, D extends Dims> {
     return new NDView(target.t, dims, stride, target.o);
   }
 
-  transpose(order: number[]) {
+  transpose(order?: number[]) {
     const target = (this[ndvInternals] || this);
-    if (order.length != target.d.length) {
+    if (!order) {
+      order = this.d.slice().reverse();
+    } else if (order.length != target.ndim) {
       throw new TypeError(`order length ${order.length} does not match data dimensions (${target.d.join(', ')})`);
     }
     const newDims: number[] = [];
     const newStrides: number[] = [];
     const seen = new Set<number>();
     for (let ord of order) {
-      ord = fixInd(ord, target.d.length);
+      ord = fixInd(ord, target.ndim);
       if (seen.has(ord)) throw new TypeError(`repeated axis ${ord} in transpose`);
       seen.add(ord);
       newStrides.push(target.s[ord]);
@@ -425,16 +449,24 @@ export class NDView<T extends DataType, D extends Dims> {
     return ret;
   }
 
-  get shape(): D {
+  get shape() {
     return this.d.slice() as Dims as D;
   }
 
-  get size(): number {
+  get ndim() {
+    return this.d.length;
+  }
+
+  get size() {
     return this.d.reduce((a, b) => a * b, 1);
   }
 
-  get dtype(): DataType {
+  get dtype() {
     return this.t.t;
+  }
+
+  get T() {
+    return this.transpose(); 
   }
 }
 

@@ -175,8 +175,8 @@ export const div = ufunc(
   'div',
   2,
   1,
-  opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32], [DataType.Float32]] as const, [DataType.Int8] as const, (a, b) => +a / b),
-  opImpl([[DataType.Float32], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32]] as const, [DataType.Int8] as const, (a, b) => a / +b),
+  opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32], [DataType.Float32]] as const, [DataType.Float32] as const, (a, b) => +a / b),
+  opImpl([[DataType.Float32], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32]] as const, [DataType.Float32] as const, (a, b) => a / +b),
   opImpl([
     [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32, DataType.Int32, DataType.Uint32, DataType.Int64, DataType.Uint64, DataType.Float64],
     [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32, DataType.Int32, DataType.Uint32, DataType.Int64, DataType.Uint64, DataType.Float64]

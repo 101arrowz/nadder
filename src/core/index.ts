@@ -3,3 +3,4 @@ export * from './ndarray';
 export * from './evaluate';
 export * from '../util/containers';
 export * from '../util/ufunc';
+export * from '../util/linalg';
