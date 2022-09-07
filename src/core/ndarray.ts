@@ -378,12 +378,14 @@ export class NDView<T extends DataType, D extends Dims> {
         ? (val: string) => val
         : (val: string) => val.padStart(maxLen, ' ');
     const concat = (arr: RecursiveArray<string>[], dim: number, indent: number) => 
-      `[${dim == target.d.length - 1
-        ? arr.map(applyPadding).join(', ')
-        : arr.map((val, i) => ' '.repeat(i && indent) +
-            concat(val as RecursiveArray<string>[], dim + 1, indent + 1)
-          ).join(dim == target.d.length - 2 ? ',\n' : ',\n\n')
-      }]`;
+      (arr as unknown as string) == '...'
+        ? arr
+        : `[${dim == target.d.length - 1
+          ? arr.map(applyPadding).join(', ')
+          : arr.map((val, i) => ' '.repeat(i && indent) +
+              concat(val as RecursiveArray<string>[], dim + 1, indent + 1)
+            ).join(dim == target.d.length - 2 ? ',\n' : ',\n\n')
+        }]`;
     return `array(${concat(result, 0, 7)}, shape=(${this.d.join(', ')}), dtype=${dataTypeNames[this.dtype]})`;
   }
 

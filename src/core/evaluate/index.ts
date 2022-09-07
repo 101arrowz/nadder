@@ -153,7 +153,7 @@ export function evaluate(strings: TemplateStringsArray, ...args: unknown[]) {
           args.push(expr());   
         }
         tokens.shift();
-        return tryCall(val, args);
+        return maybeBracket(tryCall(val, args));
       } else if (bracket.v == '[') {
         // slice index
         if (!val || !val[ndvInternals]) throw new TypeError(`attempted to index non-ndarray ${val}`);
@@ -170,7 +170,7 @@ export function evaluate(strings: TemplateStringsArray, ...args: unknown[]) {
           sliceStr += expr();
         }
         tokens.shift();
-        return val[sliceStr];
+        return maybeBracket(val[sliceStr]);
       }
     }
     return val;
