@@ -39,7 +39,6 @@ export interface NDView<T extends DataType = DataType, D extends Dims = Dims> ex
   [index: string]: IndexType<T> | NDView<T, Dims>;
 }
 export class NDView<T extends DataType, D extends Dims> {
-  private [ndvInternals]: this;
   // raw ndarray
   private t: FlatArray<T>;
   // dimensions
@@ -274,6 +273,10 @@ export class NDView<T extends DataType, D extends Dims> {
     });
   }
 
+  private get [ndvInternals]() {
+    return this;
+  }
+
   // calculate offset
   private c(ind: number[]) {
     let offset = this.o;
@@ -341,16 +344,47 @@ export class NDView<T extends DataType, D extends Dims> {
 
   toString() {
     const target = this[ndvInternals];
-    const stringify = (dim: number, ind: number) => {
-      if (dim == target.d.length) return target.t.b[ind].toString();
-      let str = '';
-      for (let i = 0; i < this.d[dim]; ++i) {
-        str += stringify(dim + 1, ind) + ', ';
-        ind += target.s[dim];
+    if (!target.d.length) return target.t.b[target.o].toString();
+    let maxLen = 0;
+    const list = (dim: number, ind: number): RecursiveArray<string> => {
+      if (dim == target.d.length) {
+        let result = target.t.b[ind].toString();
+        maxLen = Math.max(maxLen, result.length);
+        return result;
       }
-      return '[' + str.slice(0, -2) + ']';
+      const s = target.s[dim], d = target.d[dim];
+      if (d < 7) {
+        let outs = [];
+        for (let i = 0; i < d; ++i) {
+          outs.push(list(dim + 1, ind));
+          ind += s;
+        }
+        return outs;
+      }
+      return [
+        list(dim + 1, ind),
+        list(dim + 1, ind += s),
+        list(dim + 1, ind += s),
+        '...',
+        list(dim + 1, ind += s * (d - 5)),
+        list(dim + 1, ind += s),
+        list(dim + 1, ind += s)
+      ];
     }
-    return `ndarray<${dataTypeNames[target.t.t]}>(${target.d.join(', ')}) ${stringify(0, target.o)}`
+    const result = list(0, target.o) as RecursiveArray<string>[];
+    const applyPadding = target.t.t == DataType.Float32 || target.t.t == DataType.Float64
+      ? (val: string) => (val + (val.includes('.') ? '' : '.')).padEnd(maxLen, ' ')
+      : target.t.t == DataType.Any
+        ? (val: string) => val
+        : (val: string) => val.padStart(maxLen, ' ');
+    const concat = (arr: RecursiveArray<string>[], dim: number, indent: number) => 
+      `[${dim == target.d.length - 1
+        ? arr.map(applyPadding).join(', ')
+        : arr.map((val, i) => ' '.repeat(i && indent) +
+            concat(val as RecursiveArray<string>[], dim + 1, indent + 1)
+          ).join(dim == target.d.length - 2 ? ',\n' : ',\n\n')
+      }]`;
+    return `array(${concat(result, 0, 7)}, shape=(${this.d.join(', ')}), dtype=${dataTypeNames[this.dtype]})`;
   }
 
   ravel() {
@@ -361,7 +395,10 @@ export class NDView<T extends DataType, D extends Dims> {
     return this.ravel().t.b;
   }
 
-  [Symbol.for('nodejs.util.inspect.custom')]() {
+  [Symbol.for('nodejs.util.inspect.custom')](_: number, opts: { showProxy: boolean }) {
+    if (opts.showProxy) {
+      return this;
+    }
     return this.toString();
   }
 
@@ -377,7 +414,7 @@ export class NDView<T extends DataType, D extends Dims> {
   reshape<ND extends Dims>(...dims: ND): NDView<T, ND>;
   reshape<ND extends Dims>(...maybeDims: ND | [ND]): NDView<T, ND> {
     let dims = (Array.isArray(maybeDims[0]) ? maybeDims[0] : maybeDims) as ND;
-    const target = (this[ndvInternals] || this), size = target.size;
+    const target = this[ndvInternals], size = target.size;
     if (dims.some(v => !Number.isInteger(v))) {
       throw new TypeError(`cannot reshape to non-integral dimensions (${dims.join(', ')})`)
     }
@@ -430,7 +467,7 @@ export class NDView<T extends DataType, D extends Dims> {
   transpose(...order: readonly number[]): NDView<T>;
   transpose(...maybeOrder: unknown[]) {
     let order = (!maybeOrder.length || Array.isArray(maybeOrder[0]) ? maybeOrder[0] : maybeOrder) as Dims;
-    const target = (this[ndvInternals] || this);
+    const target = this[ndvInternals];
     if (!order) {
       order = this.d.map((_, i) => -i - 1);
     } else if (order.length != target.ndim) {
@@ -450,7 +487,7 @@ export class NDView<T extends DataType, D extends Dims> {
   }
 
   flatten() {
-    const target = (this[ndvInternals] || this);
+    const target = this[ndvInternals];
     const ret = ndarray(target.t.t, [target.size] as [number]);
     const dst = ret[ndvInternals];
     let dstInd = -1;
