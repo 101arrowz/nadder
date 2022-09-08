@@ -103,18 +103,107 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
             }
           }
         };
-        const call = (dim: number, ind0: number, ind1: number, outInd: number) => {
-          if (dim == dims.length) {
-            assign['t'].b[outInd] = impl(in0['t'].b[ind0], in1['t'].b[ind1]);
-          } else {
+        const slowCall = (dim: number, ind0: number, ind1: number, outInd: number) => {
+          if (dim == dims.length - 4) call(dim, ind0, ind1, outInd)
+          else {
             for (let i = 0; i < dims[dim]; ++i) {
-              call(dim + 1, ind0, ind1, outInd);
+              slowCall(dim + 1, ind0, ind1, outInd);
               ind0 += in0['s'][dim];
               ind1 += in1['s'][dim];
               outInd += assign['s'][dim];
             }
           }
         };
+        const call = (dim: number, ind0: number, ind1: number, outInd: number) => {
+          const left = dims.length - dim;
+          if (left > 4) return slowCall(dim, ind0, ind1, outInd);
+          const i0b = in0['t'].b, i1b = in1['t'].b, ob = assign['t'].b;
+          const i0s = in0['s'].slice(dim), i1s = in1['s'].slice(dim), os = assign['s'].slice(dim);
+          if (left) {
+            const id = dims[dim];
+            let i0i = i0s[0], i1i = i1s[0], oi = os[0];
+            if (left > 1) {
+              const jd = dims[dim + 1];
+              let i0j = i0s[1], i1j = i1s[1], oj = os[1];
+              i0i -= i0j * jd;
+              i1i -= i1j * jd;
+              oi -= oj * jd;
+              if (left > 2) {
+                const kd = dims[dim + 2];
+                let i0k = i0s[2], i1k = i1s[2], ok = i1s[2];
+                i0j -= i0k * kd;
+                i1j -= i1k * kd;
+                oj -= ok * kd;
+                if (left > 3) {
+                  const ld = dims[dim + 3];
+                  let i0l = i0s[3], i1l = i1s[3], ol = i1s[3];
+                  i0k -= i0l * ld;
+                  i1k -= i1l * ld;
+                  ok -= ol * ld;
+                  for (let i = 0; i < id; ++i) {
+                    for (let j = 0; j < jd; ++j) {
+                      for (let k = 0; k < kd; ++k) {
+                        for (let l = 0; l < ld; ++l) {
+                          ob[outInd] = impl(i0b[ind0], i1b[ind1]);
+                          ind0 += i0l;
+                          ind1 += i1l;
+                          outInd += ol;
+                        }
+                        ind0 += i0k;
+                        ind1 += i1k;
+                        outInd += ok;
+                      }
+                      ind0 += i0j;
+                      ind1 += i1j;
+                      outInd += oj;
+                    }
+                    ind0 += i0i;
+                    ind1 += i1i;
+                    outInd += oi;
+                  }
+                } else {
+                  for (let i = 0; i < id; ++i) {
+                    for (let j = 0; j < jd; ++j) {
+                      for (let k = 0; k < kd; ++k) {
+                        ob[outInd] = impl(i0b[ind0], i1b[ind1]);
+                        ind0 += i0k;
+                        ind1 += i1k;
+                        outInd += ok;
+                      }
+                      ind0 += i0j;
+                      ind1 += i1j;
+                      outInd += oj;
+                    }
+                    ind0 += i0i;
+                    ind1 += i1i;
+                    outInd += oi;
+                  }
+                }
+              } else {
+                for (let i = 0; i < id; ++i) {
+                  for (let j = 0; j < jd; ++j) {
+                    ob[outInd] = impl(i0b[ind0], i1b[ind1]);
+                    ind0 += i0j;
+                    ind1 += i1j;
+                    outInd += oj;
+                  }
+                  ind0 += i0i;
+                  ind1 += i1i;
+                  outInd += oi;
+                }
+              }
+            } else {
+              for (let i = 0; i < id; ++i) {
+                ob[outInd] = impl(i0b[ind0], i1b[ind1]);
+                ind0 += i0i;
+                ind1 += i1i;
+                outInd += oi;
+              }
+            }
+          } else {
+            ob[outInd] = impl(i0b[ind0], i1b[ind1])
+          }
+        }
         (where === true ? call : callWhere)(0, in0['o'], in1['o'], assign['o'], ndWhere['o']);
       } else if (nin == 1) {
         const [input] = inputs;

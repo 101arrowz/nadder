@@ -1,8 +1,9 @@
+export const ndvInternals = Symbol('ndview-internals');
+export type UnionToIntersection<U> =  (U extends unknown ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
+
 import { DataType, Dims, ndarray, NDView } from '../core';
 import { dataTypeNames } from '../core/datatype';
 
-export const ndvInternals = Symbol('ndview-internals');
-export type UnionToIntersection<U> =  (U extends unknown ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
 export const makeOut = <T extends DataType, S extends Dims>(name: string, shape: S, type: T, out?: unknown) => {
   if (out) {
     if (!out[ndvInternals]) {

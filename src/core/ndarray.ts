@@ -1,4 +1,4 @@
-import { DataType, DataTypeBuffer, dataTypeNames, IndexType, isAssignable, bestGuess, guessType, AssignableType, NumericType } from './datatype';
+import { DataType, DataTypeBuffer, dataTypeNames, IndexType, isAssignable, bestGuess, guessType, AssignableType, NumericType, BigNumericType } from './datatype';
 import { FlatArray } from './flatarray';
 import { Bitset, Complex, ComplexArray, StringArray, ndvInternals, broadcast, Broadcastable } from '../util';
 
@@ -304,7 +304,7 @@ export class NDView<T extends DataType, D extends Dims> {
     if (!isAssignable(target.t.t, val.t.t)) {
       throw new TypeError(`cannot assign to ndarray of type ${dataTypeNames[val.t.t]} to ${dataTypeNames[target.t.t]}`);
     }
-    if (target.d.filter(v => v != 1).length != this.ndim) {
+    if (target.d.filter(v => v != 1).length != target.ndim) {
       const shape = (a: unknown): number[] => Array.isArray(a) ? [a.length, ...shape(a[0])]  : [];
       throw new TypeError(`cannot broadcast ndarray of shape (${value && value[ndvInternals] ? (value as NDView).d.join(', ') : shape(value)}) to (${target.d.join(', ')})`);
     }
@@ -332,14 +332,15 @@ export class NDView<T extends DataType, D extends Dims> {
   }
 
   get(...index: number[]) {
-    if (index.length != this.ndim) {
-      throw new TypeError(`index of size ${index.length} cannot be used on ndarray with ${this.ndim} dimensions`);
+    const target = this[ndvInternals];
+    if (index.length != target.ndim) {
+      throw new TypeError(`index of size ${index.length} cannot be used on ndarray with ${target.ndim} dimensions`);
     }
-    let o = this.o;
+    let o = target.o;
     for (let i = 0; i < index.length; ++i) {
-      o += fixInd(index[i], this.d[i]) * this.s[i];
+      o += fixInd(index[i], target.d[i]) * target.s[i];
     }
-    return this.t.b[o];
+    return target.t.b[o];
   }
 
   toString() {
@@ -373,7 +374,7 @@ export class NDView<T extends DataType, D extends Dims> {
     }
     const result = list(0, target.o) as RecursiveArray<string>[];
     const applyPadding = target.t.t == DataType.Float32 || target.t.t == DataType.Float64
-      ? (val: string) => (val + (val.includes('.') ? '' : '.')).padEnd(maxLen, ' ')
+      ? (val: string) => val.padEnd(maxLen, ' ')
       : target.t.t == DataType.Any
         ? (val: string) => val
         : (val: string) => val.padStart(maxLen, ' ');
@@ -381,7 +382,7 @@ export class NDView<T extends DataType, D extends Dims> {
       (arr as unknown as string) == '...'
         ? arr
         : `[${dim == target.d.length - 1
-          ? arr.map(applyPadding).join(', ')
+          ? arr.map(v => v == '...' ? v : applyPadding(v as string)).join(', ')
           : arr.map((val, i) => ' '.repeat(i && indent) +
               concat(val as RecursiveArray<string>[], dim + 1, indent + 1)
             ).join(dim == target.d.length - 2 ? ',\n' : ',\n\n')
@@ -598,10 +599,10 @@ export interface ArangeOpts<T extends DataType> {
   dtype?: T;
 }
 
-export function arange<N extends number, T extends NumericType = DataType.Int32>(stop: N, opts?: ArangeOpts<T>): NDView<T, [N]>;
-export function arange<T extends NumericType = DataType.Float64 | DataType.Int32>(start: number, stop: number, opts?: ArangeOpts<T>): NDView<T, [number]>;
-export function arange<T extends NumericType = DataType.Float64 | DataType.Int32>(start: number, stop: number, step: number, opts?: ArangeOpts<T>): NDView<T, [number]>;
-export function arange<T extends NumericType>(stopOrStart?: number, startOrStopOrOpts?: number | ArangeOpts<T>, stepOrOpts?: number | ArangeOpts<T>, opts?: ArangeOpts<T>) {
+export function arange<N extends number, T extends NumericType | BigNumericType = DataType.Int32>(stop: N, opts?: ArangeOpts<T>): NDView<T, [N]>;
+export function arange<T extends NumericType | BigNumericType = DataType.Float64 | DataType.Int32>(start: number, stop: number, opts?: ArangeOpts<T>): NDView<T, [number]>;
+export function arange<T extends NumericType | BigNumericType = DataType.Float64 | DataType.Int32>(start: number, stop: number, step: number, opts?: ArangeOpts<T>): NDView<T, [number]>;
+export function arange<T extends NumericType | BigNumericType>(stopOrStart?: number, startOrStopOrOpts?: number | ArangeOpts<T>, stepOrOpts?: number | ArangeOpts<T>, opts?: ArangeOpts<T>) {
   let start: number, stop: number, step: number, dtype: T
   if (typeof opts == 'object' || typeof stepOrOpts == 'number') {
     start = stopOrStart;
@@ -625,6 +626,12 @@ export function arange<T extends NumericType>(stopOrStart?: number, startOrStopO
   const len = Math.max(Math.floor((stop - start) / step), 0);
   const arr = ndarray(dtype, [len] as [number]);
   const view = arr[ndvInternals];
-  for (let i = start, ind = 0; ind < len; i += step, ++ind) view['t'].b[ind] = i;
+  if ((dtype as DataType) == DataType.Int64 || (dtype as DataType) == DataType.Uint64) {
+    for (let i = start, ind = 0; ind < len; i += step, ++ind) {
+      view['t'].b[ind] = BigInt(i);
+    }
+  } else {
+    for (let i = start, ind = 0; ind < len; i += step, ++ind) view['t'].b[ind] = i;
+  }
   return arr;
 }

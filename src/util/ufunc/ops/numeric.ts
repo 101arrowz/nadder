@@ -134,7 +134,7 @@ export const conjugate = ufunc(
 export const conj = conjugate;
 
 export const pos = ufunc(
-  'neg',
+  'pos',
   1,
   1,
   opImpl([[DataType.Int8]] as const, [DataType.Int8] as const, identity),
