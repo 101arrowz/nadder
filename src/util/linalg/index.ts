@@ -1,6 +1,6 @@
-import { array, DataType, ndarray, NDView, RecursiveArray } from '../../core';
+import { array, DataType, ndarray, NDView } from '../../core';
 import { dataTypeNames, IndexType } from '../../core/datatype';
-import { broadcast, Broadcastable } from '../broadcast';
+import { Broadcastable } from '../broadcast';
 import { makeOut, ndvInternals, UnionToIntersection } from '../internal';
 
 type MT = readonly DataType[];
@@ -55,11 +55,12 @@ const typeVals: number[] = numTypes.map(im => im[0].reduce((a, b) => a | b, 0));
 type NT = typeof numTypes;
 
 type Sig<T> = T extends Impl<infer I, infer O>
-  ? (a: Broadcastable<I[number]>, b: Broadcastable<I[number]>, args?: Args<I, O>) => NDView<O>
+  ? <RO extends DataType = O>(a: Broadcastable<I[number]>, b: Broadcastable<I[number]>, args?: Args<I, RO>) => NDView<RO>
   : never;
 
 type Args<I extends MT, O extends DataType> = {
   out?: NDView<O>;
+  dtype?: O;
 };
 
 export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT, DataType>) => {
@@ -71,7 +72,7 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT
   let mul: Calc<MT, DataType>;
   let zero: () => IndexType<DataType>;
   for (let i = 0; i < typeVals.length; ++i) {
-    if (typeVals[i] & a['t'].t & b['t'].t) {
+    if ((args && args.dtype == numTypes[i][1]) || typeVals[i] & a['t'].t & b['t'].t) {
       outType = numTypes[i][1];
       add = numTypes[i][2];
       mul = numTypes[i][3];
@@ -154,3 +155,15 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT
   }
   return out.ndim ? out : out['t'].b[out['o']];
 }) as UnionToIntersection<Sig<NT[number]>>;
+
+
+type IdentityArgs<T extends DataType> = { dtype?: T };
+
+export const identity = <N extends number, T extends DataType = DataType.Int32>(n: N, args?: IdentityArgs<T>) => {
+  const nd = ndarray((args && args.dtype || DataType.Int32) as T, [n, n] as [N, N]);
+  let one = nd.dtype == DataType.Int64 || nd.dtype == DataType.Uint64
+    ? BigInt(1)
+    : 1;
+  for (let i = 0; i < n; ++i) nd[i][i] = one;
+  return nd;
+}

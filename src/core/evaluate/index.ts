@@ -1,11 +1,11 @@
 import { ndvInternals } from '../../util';
 import * as ufuncOps from '../../util/ufunc/ops';
-import { matmul } from '../../util';
+import * as linalgOps from '../../util/linalg';
 import { arange, NDView } from '../ndarray';
 
 const ops = {
   ...ufuncOps,
-  matmul,
+  ...linalgOps,
   arange,
   reshape: (arr: NDView, ...args: [number[]]) => {
     if (!arr || !arr[ndvInternals]) {
