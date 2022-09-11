@@ -92,7 +92,26 @@ export function bestGuess(types: DataType[]) {
   return maxType;
 }
 
-export const dataTypeBufferMap = {
+// Needed for proper declaration type emits
+type DataTypeBufferMap = {
+  [DataType.Int8]: Int8ArrayConstructor,
+  [DataType.Uint8]: Uint8ArrayConstructor,
+  [DataType.Uint8Clamped]: Uint8ClampedArrayConstructor,
+  [DataType.Int16]: Int16ArrayConstructor,
+  [DataType.Uint16]: Uint16ArrayConstructor,
+  [DataType.Int32]: Int32ArrayConstructor,
+  [DataType.Uint32]: Uint32ArrayConstructor,
+  [DataType.Float32]: Float32ArrayConstructor,
+  [DataType.Float64]: Float64ArrayConstructor,
+  [DataType.Complex]: typeof ComplexArray,
+  [DataType.Bool]: typeof Bitset,
+  [DataType.String]: typeof StringArray,
+  [DataType.Int64]: BigInt64ArrayConstructor,
+  [DataType.Uint64]: BigUint64ArrayConstructor,
+  [DataType.Any]: { new(length: number): unknown[] }
+};
+
+export const dataTypeBufferMap: DataTypeBufferMap = {
   [DataType.Int8]: Int8Array,
   [DataType.Uint8]: Uint8Array,
   [DataType.Uint8Clamped]: Uint8ClampedArray,
@@ -107,13 +126,11 @@ export const dataTypeBufferMap = {
   [DataType.String]: StringArray,
   [DataType.Int64]: BigInt64Array,
   [DataType.Uint64]: BigUint64Array,
-  [DataType.Any]: Array as { new(length: number): unknown[] }
+  [DataType.Any]: Array
 };
 
-type DTBM = typeof dataTypeBufferMap;
-
-export type DataTypeBuffer<T extends DataType> = InstanceType<DTBM[T]>;
+export type DataTypeBuffer<T extends DataType> = InstanceType<DataTypeBufferMap[T]>;
 export type InferDataType<T extends DataTypeBuffer<DataType>> = {
-  [K in keyof DTBM]: T extends DataTypeBuffer<K> ? K : never
-}[keyof DTBM];
+  [K in keyof DataTypeBufferMap]: T extends DataTypeBuffer<K> ? K : never
+}[keyof DataTypeBufferMap];
 export type IndexType<T extends DataType> = DataTypeBuffer<T>[number];

@@ -12,6 +12,7 @@ const findType = <T extends DataType>(data: DataTypeBuffer<T>): T => {
   }
 }
 
+/** @internal */
 export class FlatArray<T extends DataType> {
   // type
   t: T;

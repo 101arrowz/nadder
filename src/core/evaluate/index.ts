@@ -31,19 +31,36 @@ type Token = { t: Exclude<TokenType, TokenType.Value>; v: string } | {
   v: unknown;
 };
 
-export function evaluate(strings: TemplateStringsArray, ...args: unknown[]) {
-  if (!strings.length || args.length != strings.length - 1) {
+/**
+ * Evaluates an expression of operations potentially applied to ndarrays. This allows for more
+ * natural syntax, e.g. using the `*` operator instead of `mul()`
+ * @param code The code snippets to evaluate
+ * @param args The values to interpolate between the code snippets
+ * @returns The result of evaluating the provided expression
+ * @example
+ * ```js
+ * import { evaluate, arange } from 'nadder';
+ * 
+ * // Typically called as a tagged template
+ * const result = evaluate`
+ *   ${arange(20).reshape(5, 4)} @ ${arange(30, 34)} +
+ *   [5, 4, 3, 2, 1]
+ * `;
+ * ```
+ */
+export function evaluate(code: readonly string[], ...args: unknown[]): unknown {
+  if (!code.length || args.length != code.length - 1) {
     throw new TypeError('invalid arguments to evaluate');
   }
   let curStringInd = 0;
-  let curInput = strings[0];
+  let curInput = code[0];
   const tokens: Token[] = [];
   o: do {
     curInput = curInput.trimStart();
     while (!curInput) {
-      if (++curStringInd >= strings.length) break o;
+      if (++curStringInd >= code.length) break o;
       tokens.push({ t: TokenType.Value, v: args[curStringInd - 1] });
-      curInput = strings[curStringInd].trimStart();
+      curInput = code[curStringInd].trimStart();
     }
     let char = curInput[0];
     switch (char) {

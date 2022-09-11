@@ -65,15 +65,11 @@ export const mul = ufunc(
   complexTypeImpl((a, b) => ({ real: a.real * b.real - a.imag * b.imag, imag: a.real * b.imag + a.imag * b.real }))
 );
 
-export const floorDiv = ufunc(
-  'floorDiv',
+export const fdiv = ufunc(
+  'fdiv',
   2,
   1,
-  ...typeImpls((a, b) => Math.floor(a / b), (a, b) => a / b),
-  complexTypeImpl((a, b) => {
-    const denom = Math.hypot(b.real, b.imag);
-    return { real: (a.real * b.real + a.imag * b.imag) / denom, imag: (a.imag * b.real - a.real * b.imag) / denom };
-  })
+  ...typeImpls((a, b) => Math.floor(a / b), (a, b) => a / b)
 );
 
 export const pow = ufunc(

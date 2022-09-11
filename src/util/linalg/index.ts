@@ -85,15 +85,15 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT
     throw new TypeError(`cannot apply matmul to tensors of types ${dataTypeNames[a['t'].t]} and (${dataTypeNames[b['t'].t]})`);
   }
 
-  let dimSub = 0;
+  let aUp = 0, bUp = 0;
 
   if (a.ndim == 1) {
     a = new NDView(a['t'], [1, a['d'][0]], [0, a['s'][0]], a['o'])[ndvInternals];
-    ++dimSub;
+    aUp = 1;
   }
   if (b.ndim == 1) {
     b = new NDView(b['t'], [b['d'][0], 1], [b['s'][0], 0], b['o'])[ndvInternals];
-    ++dimSub;
+    bUp = 1;
   }
 
   if (a.ndim < 2 || b.ndim < 2 || a['d'][a.ndim - 1] != b['d'][b.ndim - 2]) {
@@ -111,11 +111,15 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT
   const rInd = ndim - 2;
   const cInd = ndim - 1;
 
-  let out = makeOut('matmul', shape.slice(dimSub), outType, args && args.out);
+  let out = makeOut('matmul', shape.slice(aUp, shape.length - bUp), outType, args && args.out);
 
-  for (let i = 0; i < dimSub; ++i) {
+  if (aUp) {
     out['d'].unshift(1);
     out['s'].unshift(0);
+  }
+  if (bUp) {
+    out['d'].push(1);
+    out['s'].push(0);
   }
 
   const inner = (dim: number, aInd: number, bInd: number, oInd: number) => {
@@ -149,10 +153,16 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT
     }
   }
   inner(0, a['o'], b['o'], out['o']);
-  for (let i = 0; i < dimSub; ++i) {
+
+  if (aUp) {
     out['d'].shift();
     out['s'].shift();
   }
+  if (bUp) {
+    out['d'].pop();
+    out['s'].pop();
+  }
+
   return out.ndim ? out : out['t'].b[out['o']];
 }) as UnionToIntersection<Sig<NT[number]>>;
 
