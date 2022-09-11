@@ -1,4 +1,4 @@
-import { DataType, DataTypeBuffer, dataTypeNames, IndexType, isAssignable, bestGuess, guessType, AssignableType, NumericType, BigNumericType } from './datatype';
+import { DataType, DataTypeBuffer, dataTypeNames, IndexType, isAssignable, bestGuess, guessType, AssignableType, NumericType, BigNumericType, dataTypeBufferMap, InferDataType } from './datatype';
 import { FlatArray } from './flatarray';
 import { Bitset, Complex, ComplexArray, StringArray, ndvInternals, broadcast, Broadcastable } from '../util';
 
@@ -34,6 +34,9 @@ const getFreeID = () => {
 
 const indexablePrefix = `ndarray${zws}`;
 
+/**
+ * An N-dimensional view of a contiguous block of memory, i.e. an ndarray
+ */
 export interface NDView<T extends DataType = DataType, D extends Dims = Dims> extends Iterable<NDViewChild<T, D>> {
   [index: number]: NDViewChild<T, D>;
   [index: string]: IndexType<T> | NDView<T, Dims>;
@@ -48,6 +51,7 @@ export class NDView<T extends DataType, D extends Dims> {
   // offset
   private o: number;
 
+  /** @internal */
   constructor(src: FlatArray<T>, dims: D, stride: number[], offset: number) {
     this.t = src;
     this.d = dims;
@@ -299,6 +303,10 @@ export class NDView<T extends DataType, D extends Dims> {
     }
   }
 
+  /**
+   * Copies data from another ndarray into the current view
+   * @param value The view to copy data from
+   */
   set(value: Broadcastable<AssignableType<T>>) {
     const [target, val] = broadcast(this, value);
     if (!isAssignable(target.t.t, val.t.t)) {
@@ -331,7 +339,21 @@ export class NDView<T extends DataType, D extends Dims> {
     set(0, target.o, val.o);
   }
 
-  get(...index: number[]) {
+  /**
+   * Gets the value at a fully qualified index. For slicing, use the bracket notation.
+   * @param index The index to get. Should have the same number of dimensions as the ndarray
+   * @returns The value at the given index
+   */
+  get(index?: readonly number[]): IndexType<T>;
+  /**
+   * Gets the value at a fully qualified index. For slicing, use the bracket notation.
+   * @param index The indices to get. Should be the same length as the same number of dimensions in
+   *              the ndarray
+   * @returns The value at the given index
+   */
+  get(...index: readonly number[]): IndexType<T>;
+  get(...maybeIndex: unknown[]) {
+    let index = (Array.isArray(maybeIndex[0]) ? maybeIndex[0] : maybeIndex) as number[];
     const target = this[ndvInternals];
     if (index.length != target.ndim) {
       throw new TypeError(`index of size ${index.length} cannot be used on ndarray with ${target.ndim} dimensions`);
@@ -343,13 +365,20 @@ export class NDView<T extends DataType, D extends Dims> {
     return target.t.b[o];
   }
 
+  /**
+   * Converts the ndarray into a pretty representation
+   * @returns A prettified string representing the ndarray
+   */
   toString() {
     const target = this[ndvInternals];
-    if (!target.d.length) return target.t.b[target.o].toString();
+    const stringify = target.t.t == DataType.Any || target.t.t == DataType.String
+      ? (v: unknown) => JSON.stringify(v)
+      : (v: unknown) => v.toString()
+    if (!target.d.length) return stringify(target.t.b[target.o]);
     let maxLen = 0;
     const list = (dim: number, ind: number): RecursiveArray<string> => {
       if (dim == target.d.length) {
-        let result = target.t.b[ind].toString();
+        let result = stringify(target.t.b[ind]);
         maxLen = Math.max(maxLen, result.length);
         return result;
       }
@@ -390,12 +419,47 @@ export class NDView<T extends DataType, D extends Dims> {
     return `array(${concat(result, 0, 7)}, shape=(${this.d.join(', ')}), dtype=${dataTypeNames[this.dtype]})`;
   }
 
+  /**
+   * Ravels the ndarray into a flat representation, avoiding copying if possible
+   * @returns A flattened version of the ndarray, possible viewing the same contiguous buffer as
+   *          the source array
+   */
   ravel() {
-    return this.reshape([this.size]);
+    return this.reshape([this.size] as [number]);
   }
 
+  /**
+   * Gets a flat buffer containing the contents of the ndarray. Often useful for usage within
+   * another ndarray library (e.g. ONNX Runtime Web's Tensor) 
+   * @returns A flat array containing the contents of this view, possibly pointing to the same
+   *          buffer as the ndarray
+   */
   toRaw(): DataTypeBuffer<T> {
-    return this.ravel().t.b;
+    switch (this.t.t) {
+      case DataType.String:
+      case DataType.Any:
+        return this.flatten().t.b;
+      case DataType.Bool: {
+        const raveled = this.ravel() as NDView<DataType.Bool>;
+        return new Bitset(
+          raveled.t.b.buffer,
+          raveled.size,
+          raveled.o + raveled.t.b.offset
+        ) as DataTypeBuffer<T>;
+      }
+      case DataType.Complex: {
+        const raveled = this.ravel() as NDView<DataType.Complex>;
+        return new ComplexArray(
+          raveled.t.b.buffer.subarray(raveled.o << 1, (raveled.o + raveled.size) << 1)
+        ) as DataTypeBuffer<T>;
+      }
+      default: {
+        const raveled = this.ravel();
+        return (raveled.t.b as DataTypeBuffer<
+          Exclude<DataType, DataType.Any | DataType.String | DataType.Bool | DataType.Complex>
+        >).subarray(raveled.o, raveled.size) as DataTypeBuffer<T>;
+      }
+    }
   }
 
   [Symbol.for('nodejs.util.inspect.custom')](_: number, opts: { showProxy: boolean }) {
@@ -413,7 +477,15 @@ export class NDView<T extends DataType, D extends Dims> {
     return `${indexablePrefix}${zws.repeat(id)}<${dataTypeNames[this.t.t]}>(${this.d.join('x')}) [...]`;
   }
 
+  /**
+   * Reshapes an ndarray to new dimensions matching the original size in row-major order
+   * @param dims The new dimensions to reshape into
+   */
   reshape<ND extends Dims>(dims: ND): NDView<T, ND>;
+  /**
+   * Reshapes an ndarray to new dimensions matching the original size in row-major order
+   * @param dims The new dimensions to reshape into
+   */
   reshape<ND extends Dims>(...dims: ND): NDView<T, ND>;
   reshape<ND extends Dims>(...maybeDims: ND | [ND]): NDView<T, ND> {
     let dims = (Array.isArray(maybeDims[0]) ? maybeDims[0] : maybeDims) as ND;
@@ -466,8 +538,25 @@ export class NDView<T extends DataType, D extends Dims> {
     return new NDView(target.t, dims, stride, target.o);
   }
 
-  transpose(order?: readonly number[]): NDView<T>;
-  transpose(...order: readonly number[]): NDView<T>;
+  /**
+   * Reverses the order of the axes in the ndarray
+   * @returns The transposed ndarray as a view of the same buffer
+   */
+  transpose(): NDView<T, number[]>;
+  /**
+   * Reorders the axes in the ndarray
+   * @param order The new axis order, where each element of the array corresponds to the current
+   *              index of the axis in this ndarray's dimensions
+   * @returns An ndarray with reordered axes as a view of the same buffer
+   */
+  transpose(order: readonly number[]): NDView<T, number[]>;
+  /**
+   * Reorders the axes in the ndarray
+   * @param order The new axis order, where each value corresponds to the current index of the
+   *              axis in this ndarray's dimensions
+   * @returns An ndarray with reordered axes as a view of the same buffer
+   */
+  transpose(...order: readonly number[]): NDView<T, number[]>;
   transpose(...maybeOrder: unknown[]) {
     let order = (!maybeOrder.length || Array.isArray(maybeOrder[0]) ? maybeOrder[0] : maybeOrder) as Dims;
     const target = this[ndvInternals];
@@ -489,6 +578,10 @@ export class NDView<T extends DataType, D extends Dims> {
     return new NDView(target.t, newDims, newStrides, target.o);
   }
 
+  /**
+   * Flattens the ndarray into a single dimension. Similar to `ravel()` but always copies the data
+   * @returns A copy of the array flattened into one dimension
+   */
   flatten() {
     const target = this[ndvInternals];
     const ret = ndarray(target.t.t, [target.size] as [number]);
@@ -508,43 +601,56 @@ export class NDView<T extends DataType, D extends Dims> {
     return ret;
   }
 
+  /**
+   * The shape of the ndarray, e.g. [10, 20, 5]
+   */
   get shape() {
     return this.d.slice() as Dims as D;
   }
 
+  /**
+   * The number of dimensions in the ndarray
+   */
   get ndim() {
     return this.d.length;
   }
 
+  /**
+   * The total number of elements in the ndarray
+   */
   get size() {
     return this.d.reduce((a, b) => a * b, 1);
   }
 
+  /**
+   * The ndarray's datatype
+   */
   get dtype() {
     return this.t.t;
   }
 
+  /**
+   * The ndarray's transpose
+   */
   get T() {
     return this.transpose(); 
   }
 }
 
-export function ndarray<D extends Dims>(data: Int8Array, dimensions: D): NDView<DataType.Int8, D>;
-export function ndarray<D extends Dims>(data: Uint8Array, dimensions: D): NDView<DataType.Uint8, D>;
-export function ndarray<D extends Dims>(data: Uint8ClampedArray, dimensions: D): NDView<DataType.Uint8Clamped, D>;
-export function ndarray<D extends Dims>(data: Int16Array, dimensions: D): NDView<DataType.Int16, D>;
-export function ndarray<D extends Dims>(data: Uint16Array, dimensions: D): NDView<DataType.Uint16, D>;
-export function ndarray<D extends Dims>(data: Int32Array, dimensions: D): NDView<DataType.Int32, D>;
-export function ndarray<D extends Dims>(data: Uint32Array, dimensions: D): NDView<DataType.Uint32, D>;
-export function ndarray<D extends Dims>(data: Float32Array, dimensions: D): NDView<DataType.Float32, D>;
-export function ndarray<D extends Dims>(data: Float64Array, dimensions: D): NDView<DataType.Float64, D>;
-export function ndarray<D extends Dims>(data: ComplexArray, dimensions: D): NDView<DataType.Complex, D>;
-export function ndarray<D extends Dims>(data: Bitset, dimensions: D): NDView<DataType.Bool, D>;
-export function ndarray<D extends Dims>(data: StringArray, dimensions: D): NDView<DataType.String, D>;
-export function ndarray<D extends Dims>(data: BigInt64Array, dimensions: D): NDView<DataType.Int64, D>;
-export function ndarray<D extends Dims>(data: BigUint64Array, dimensions: D): NDView<DataType.Uint64, D>;
-export function ndarray<D extends Dims>(data: unknown[], dimensions: D): NDView<DataType.Any, D>;
-export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | DataTypeBuffer<T>, dimensions: D): NDView<T, D>;
+/**
+ * Creates an empty ndarray from its type and dimensions
+ * @param type The datatype for the ndarray
+ * @param dimensions The dimensions of the ndarray
+ * @returns An ndarray with the given dimensions and default values for the given datatype
+ */
+export function ndarray<T extends DataType, D extends Dims>(type: T, dimensions: D): NDView<T, D>;
+/**
+ * Wraps a flat buffer in an ndarray interface
+ * @param data The buffer to wrap, with a length that matches the given dimensions
+ * @param dimensions The dimensions of the ndarray
+ * @returns An ndarray with the given dimensions and data
+ */
+export function ndarray<T extends DataTypeBuffer<DataType>, D extends Dims>(data: T, dimensions: D): NDView<InferDataType<T>, D>;
 export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | DataTypeBuffer<T>, dimensions: D) {
   if (dimensions.some(d => !Number.isInteger(d))) {
     throw new TypeError(`cannot reshape to non-integral dimensions (${dimensions.join(', ')})`)
@@ -576,13 +682,46 @@ const recurseFind = (data: RecursiveArray<unknown>): [number[], DataType] => {
   return [[], guessType(data)];
 }
 
+/**
+ * A recursive list interface for use with `array()`
+ */
 export type RecursiveArray<T> = T | RecursiveArray<T>[];
 
+/**
+ * Creates an ndarray from nested Array objects
+ * @param data The N-dimensional list to load data from
+ * @returns An ndarray with the provided data represented in an efficient format
+ */
 export function array(data: RecursiveArray<number>): NDView<DataType.Int32 | DataType.Float64>;
+/**
+ * Creates an ndarray from nested Array objects
+ * @param data The N-dimensional list to load data from
+ * @returns An ndarray with the provided data represented in an efficient format
+ */
 export function array(data: RecursiveArray<bigint>): NDView<DataType.Int64>;
+/**
+ * Creates an ndarray from nested Array objects
+ * @param data The N-dimensional list to load data from
+ * @returns An ndarray with the provided data represented in an efficient format
+ */
 export function array(data: RecursiveArray<string>): NDView<DataType.String>;
+/**
+ * Creates an ndarray from nested Array objects
+ * @param data The N-dimensional list to load data from
+ * @returns An ndarray with the provided data represented in an efficient format
+ */
 export function array(data: RecursiveArray<boolean>): NDView<DataType.Bool>;
+/**
+ * Creates an ndarray from nested Array objects
+ * @param data The N-dimensional list to load data from
+ * @returns An ndarray with the provided data represented in an efficient format
+ */
 export function array(data: RecursiveArray<Complex>): NDView<DataType.Complex>;
+/**
+ * Creates an ndarray from nested Array objects
+ * @param data The N-dimensional list to load data from
+ * @returns An ndarray with the provided data represented in an efficient format
+ */
 export function array(data: RecursiveArray<unknown>): NDView<DataType.Any>;
 export function array(data: RecursiveArray<unknown>): NDView<DataType> {
   const [dims, type] = recurseFind(data);
@@ -595,12 +734,39 @@ export function array(data: RecursiveArray<unknown>): NDView<DataType> {
   return arr;
 }
 
+/**
+ * Options for `arange`
+ */
 export interface ArangeOpts<T extends DataType> {
+  /**
+   * The datatype to use for the new arange
+   */
   dtype?: T;
 }
 
+/**
+ * Creates a range from 0 to the given stop point, excluding the end
+ * @param stop The end of the range
+ * @param opts Additional options for range creation
+ * @returns A flat ndarray representing the supplied range
+ */
 export function arange<N extends number, T extends NumericType | BigNumericType = DataType.Int32>(stop: N, opts?: ArangeOpts<T>): NDView<T, [N]>;
+/**
+ * Creates a range from the given start point to the given stop point, excluding the end
+ * @param start The start of the range
+ * @param stop The end of the range
+ * @param opts Additional options for range creation
+ * @returns A flat ndarray representing the supplied range
+ */
 export function arange<T extends NumericType | BigNumericType = DataType.Float64 | DataType.Int32>(start: number, stop: number, opts?: ArangeOpts<T>): NDView<T, [number]>;
+/**
+ * Creates a stepped range from the given start point to the given stop point, excluding the end
+ * @param start The start of the range
+ * @param stop The end of the range
+ * @param step The number to increment by between each element
+ * @param opts Additional options for range creation
+ * @returns A flat ndarray representing the supplied range
+ */
 export function arange<T extends NumericType | BigNumericType = DataType.Float64 | DataType.Int32>(start: number, stop: number, step: number, opts?: ArangeOpts<T>): NDView<T, [number]>;
 export function arange<T extends NumericType | BigNumericType>(stopOrStart?: number, startOrStopOrOpts?: number | ArangeOpts<T>, stepOrOpts?: number | ArangeOpts<T>, opts?: ArangeOpts<T>) {
   let start: number, stop: number, step: number, dtype: T

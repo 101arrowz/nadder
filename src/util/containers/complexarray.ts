@@ -4,23 +4,28 @@ export interface ComplexArray {
   [index: number]: Complex;
 }
 export class ComplexArray {
-  // buffer
-  private b: Float32Array | Float64Array;
-  // size
+  /**
+   * The interleaved buffer this complex array accesses
+   */
+  readonly buffer: Float32Array | Float64Array;
+  
+  /**
+   * The number of elements in the array
+   */
   readonly length: number;
 
   constructor(size: number, float?: boolean);
   constructor(interleaved: Float32Array | Float64Array);
   constructor(sizeOrBuf: number | Float32Array | Float64Array, float?: boolean) {
     if (typeof sizeOrBuf == 'number') {
-      this.b = new (float ? Float32Array : Float64Array)(sizeOrBuf << 1);
+      this.buffer = new (float ? Float32Array : Float64Array)(sizeOrBuf << 1);
     } else {
-      this.b = sizeOrBuf;
-      if (this.b.length & 1) {
+      this.buffer = sizeOrBuf;
+      if (this.buffer.length & 1) {
         throw new TypeError('interleaved complex buffer must be even length');
       }
     }
-    const size = this.length = this.b.length >> 1;
+    const size = this.length = this.buffer.length >> 1;
     return new Proxy(this, {
       get: (target, name) => {
         if (typeof name == 'symbol') return target[name];
@@ -29,16 +34,16 @@ export class ComplexArray {
         if (!Number.isInteger(ind) || ind < 0 || ind > size) return;
         return wrap({
           get real() {
-            return target.b[ind << 1];
+            return target.buffer[ind << 1];
           },
           set real(val: number) {
-            target.b[ind << 1] = val;
+            target.buffer[ind << 1] = val;
           },
           get imag() {
-            return target.b[(ind << 1) + 1];
+            return target.buffer[(ind << 1) + 1];
           },
           set imag(val: number) {
-            target.b[(ind << 1) + 1] = val;
+            target.buffer[(ind << 1) + 1] = val;
           }
         });
       },
@@ -54,8 +59,8 @@ export class ComplexArray {
                 }
                 value = { real, imag: 0 };
               }
-              target.b[ind << 1] = value.real;
-              target.b[(ind << 1) + 1] = value.imag;
+              target.buffer[ind << 1] = value.real;
+              target.buffer[(ind << 1) + 1] = value.imag;
             }
             return true;
           }
@@ -66,23 +71,12 @@ export class ComplexArray {
     });
   }
 
-  // non-reactive get
-  get(ind: number) {
-    if (!Number.isInteger(ind) || ind < 0 || ind > this.length) {
-      throw new RangeError(`index ${ind} out of range for complex array of length ${this.length}`);
-    }
-    return wrap({
-      real: this.b[ind << 1],
-      imag: this.b[(ind << 1) + 1]
-    });
-  }
-
   toArray(): Complex[] {
     const out = new Array<Complex>(this.length);
     for (let i = 0; i < out.length; ++i) {
       out[i] = wrap({
-        real: this.b[i << 1],
-        imag: this.b[(i << 1) + 1]
+        real: this.buffer[i << 1],
+        imag: this.buffer[(i << 1) + 1]
       });
     }
     return out;
@@ -91,8 +85,8 @@ export class ComplexArray {
   static fromArray(src: Complex[]) {
     const bs = new ComplexArray(src.length);
     for (let i = 0; i < src.length; ++i) {
-      bs.b[i << 1] = src[i].real;
-      bs.b[(i << 1) + 1] = src[i].imag;
+      bs.buffer[i << 1] = src[i].real;
+      bs.buffer[(i << 1) + 1] = src[i].imag;
     }
     return bs;
   }

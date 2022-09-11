@@ -60,7 +60,7 @@ console.log(add(t, boolIndex));
 - In progress: support for most NumPy manipulations, more fast paths for higher performance, fast WASM modules
 
 ### Limitations
-- No direct Fortran (column-major) memory layout support
+- Fortran (column-major) memory layout supported indirectly
 - Limited Complex64 support (Complex128 fully supported)
 
 ## License

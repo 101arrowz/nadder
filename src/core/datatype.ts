@@ -110,5 +110,10 @@ export const dataTypeBufferMap = {
   [DataType.Any]: Array as { new(length: number): unknown[] }
 };
 
-export type DataTypeBuffer<T extends DataType> = InstanceType<(typeof dataTypeBufferMap)[T]>
+type DTBM = typeof dataTypeBufferMap;
+
+export type DataTypeBuffer<T extends DataType> = InstanceType<DTBM[T]>;
+export type InferDataType<T extends DataTypeBuffer<DataType>> = {
+  [K in keyof DTBM]: T extends DataTypeBuffer<K> ? K : never
+}[keyof DTBM];
 export type IndexType<T extends DataType> = DataTypeBuffer<T>[number];

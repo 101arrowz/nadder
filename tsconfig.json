@@ -5,6 +5,7 @@
         "moduleResolution": "node",
         "outDir": "lib",
         "preserveConstEnums": true,
+        "stripInternal": true,
         "declaration": true
     },
     "include": ["src"]
