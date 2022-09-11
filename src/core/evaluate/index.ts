@@ -1,12 +1,13 @@
 import { ndvInternals } from '../../util';
 import * as ufuncOps from '../../util/ufunc/ops';
 import * as linalgOps from '../../util/linalg';
-import { arange, NDView } from '../ndarray';
+import * as helpers from '../../util/helpers';
+import { NDView } from '../ndarray';
 
 const ops = {
   ...ufuncOps,
   ...linalgOps,
-  arange,
+  ...helpers,
   reshape: (arr: NDView, ...args: [number[]]) => {
     if (!arr || !arr[ndvInternals]) {
       throw new TypeError('cannot reshape non-ndarray')

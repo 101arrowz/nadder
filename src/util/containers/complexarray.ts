@@ -1,5 +1,8 @@
 import { Complex, wrap } from '../types/complex';
 
+/**
+ * An array of complex numbers represented as an interleaved buffer of real and imaginary parts
+ */
 export interface ComplexArray {
   [index: number]: Complex;
 }
@@ -14,7 +17,16 @@ export class ComplexArray {
    */
   readonly length: number;
 
+  /**
+   * Creates a complex array filled with zeros
+   * @param size The number of complex numbers in the array
+   * @param float Whether or not to use 32-bit floats instead of 64-bit doubles
+   */
   constructor(size: number, float?: boolean);
+  /**
+   * Wraps an interleaved buffer of real and imaginary parts into a complex array
+   * @param interleaved The interleaved buffer to wrap
+   */
   constructor(interleaved: Float32Array | Float64Array);
   constructor(sizeOrBuf: number | Float32Array | Float64Array, float?: boolean) {
     if (typeof sizeOrBuf == 'number') {
@@ -71,6 +83,10 @@ export class ComplexArray {
     });
   }
 
+  /**
+   * Converts the complex array into a standard Array object
+   * @returns An array of the elements
+   */
   toArray(): Complex[] {
     const out = new Array<Complex>(this.length);
     for (let i = 0; i < out.length; ++i) {
@@ -82,6 +98,11 @@ export class ComplexArray {
     return out;
   }
 
+  /**
+   * Creates a complex array from a standard Array of complex numbers
+   * @param src The array of complex numbers to build off of
+   * @returns A complex array with the provided contents
+   */
   static fromArray(src: Complex[]) {
     const bs = new ComplexArray(src.length);
     for (let i = 0; i < src.length; ++i) {

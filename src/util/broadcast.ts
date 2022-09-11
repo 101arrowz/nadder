@@ -1,6 +1,7 @@
-import { NDView, RecursiveArray, array } from '../core/ndarray';
+import { NDView } from '../core/ndarray';
 import { DataType, IndexType } from '../core/datatype';
 import { ndvInternals } from './internal';
+import { array, RecursiveArray } from './helpers';
 
 export type Broadcastable<T extends DataType> = NDView<T> | RecursiveArray<IndexType<T>>;
 type Broadcast<T extends DataType[]> = { [I in keyof T]: NDView<T[I]> };

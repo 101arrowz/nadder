@@ -1,3 +1,6 @@
+/**
+ * An efficient boolean array using a byte array as a bitset
+ */
 export interface Bitset {
   [index: number]: boolean;
 }

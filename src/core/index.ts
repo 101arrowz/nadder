@@ -4,3 +4,4 @@ export * from './evaluate';
 export * from '../util/containers';
 export * from '../util/ufunc';
 export * from '../util/linalg';
+export * from '../util/helpers';

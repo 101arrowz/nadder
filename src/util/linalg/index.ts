@@ -1,7 +1,8 @@
-import { array, DataType, ndarray, NDView } from '../../core';
-import { dataTypeNames, IndexType } from '../../core/datatype';
+import { NDView } from '../../core/ndarray';
+import { DataType, dataTypeNames, IndexType } from '../../core/datatype';
 import { Broadcastable } from '../broadcast';
 import { makeOut, ndvInternals, UnionToIntersection } from '../internal';
+import { ndarray, array } from '../helpers';
 
 type MT = readonly DataType[];
 
@@ -55,15 +56,30 @@ const typeVals: number[] = numTypes.map(im => im[0].reduce((a, b) => a | b, 0));
 type NT = typeof numTypes;
 
 type Sig<T> = T extends Impl<infer I, infer O>
-  ? <RO extends DataType = O>(a: Broadcastable<I[number]>, b: Broadcastable<I[number]>, args?: Args<I, RO>) => NDView<RO>
+  ? <RO extends DataType = O>(a: Broadcastable<I[number]>, b: Broadcastable<I[number]>, opts?: MatmulOpts<I, RO>) => NDView<RO>
   : never;
 
-type Args<I extends MT, O extends DataType> = {
+/**
+ * Options for `matmul`
+ */
+export interface MatmulOpts<I extends MT, O extends DataType> {
+  /** The ndarray into which to write the output */
   out?: NDView<O>;
+  /**
+   * The datatype to use for the output
+   */
   dtype?: O;
-};
+}
 
-export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT, DataType>) => {
+/**
+ * Performs matrix multiplication on two ndarrays. 1D ndarrays are treated as row vectors (first
+ * argument) or column vectors (second argument). 2D ndarrays are treated as matrices. Higher
+ * dimensions are treated as stacked matrices.
+ * @param a The first ndarray
+ * @param b The second ndarray
+ * @param opts Additional options for the matrix multiplication
+ */
+export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, opts?: MatmulOpts<MT, DataType>) => {
   a = a && a[ndvInternals] || array(a)[ndvInternals];
   b = b && b[ndvInternals] || array(b)[ndvInternals];
   
@@ -72,7 +88,7 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT
   let mul: Calc<MT, DataType>;
   let zero: () => IndexType<DataType>;
   for (let i = 0; i < typeVals.length; ++i) {
-    if ((args && args.dtype == numTypes[i][1]) || typeVals[i] & a['t'].t & b['t'].t) {
+    if ((opts && opts.dtype == numTypes[i][1]) || typeVals[i] & a['t'].t & b['t'].t) {
       outType = numTypes[i][1];
       add = numTypes[i][2];
       mul = numTypes[i][3];
@@ -111,7 +127,7 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT
   const rInd = ndim - 2;
   const cInd = ndim - 1;
 
-  let out = makeOut('matmul', shape.slice(aUp, shape.length - bUp), outType, args && args.out);
+  let out = makeOut('matmul', shape.slice(aUp, shape.length - bUp), outType, opts && opts.out);
 
   if (aUp) {
     out['d'].unshift(1);
@@ -167,10 +183,24 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, args?: Args<MT
 }) as UnionToIntersection<Sig<NT[number]>>;
 
 
-type IdentityArgs<T extends DataType> = { dtype?: T };
+/**
+ * Options for `identity`
+ */
+export interface IdentityOpts<T extends DataType> {
+  /**
+   * The datatype to use for the output
+   */
+  dtype?: T;
+}
 
-export const identity = <N extends number, T extends DataType = DataType.Int32>(n: N, args?: IdentityArgs<T>) => {
-  const nd = ndarray((args && args.dtype || DataType.Int32) as T, [n, n] as [N, N]);
+/**
+ * Creates the identity matrix with the given number of rows and columns
+ * @param n The size of the identity matrix
+ * @param opts Options for the identity matrix creation
+ * @returns A new identity matrix with the given size
+ */
+export const identity = <N extends number, T extends DataType = DataType.Int32>(n: N, opts?: IdentityOpts<T>) => {
+  const nd = ndarray((opts && opts.dtype || DataType.Int32) as T, [n, n] as [N, N]);
   let one = nd.dtype == DataType.Int64 || nd.dtype == DataType.Uint64
     ? BigInt(1)
     : 1;

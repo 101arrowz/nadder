@@ -1,5 +1,10 @@
+/**
+ * A complex number
+ */
 export interface Complex {
+  /** Real part of the complex number */
   real: number;
+  /** Imaginary part of the complex number */
   imag: number;
 };
 

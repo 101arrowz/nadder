@@ -1,7 +1,8 @@
-import { Dims, ndarray, NDView, RecursiveArray } from '../../core/ndarray';
+import { Dims, NDView } from '../../core/ndarray';
 import { DataType, dataTypeNames, IndexType } from '../../core/datatype';
 import { broadcast } from '../broadcast';
 import { makeOut, ndvInternals, UnionToIntersection } from '../internal';
+import { ndarray, RecursiveArray } from '../helpers';
 
 type MultiType = readonly DataType[];
 type MultiTypeArgs = readonly MultiType[];
