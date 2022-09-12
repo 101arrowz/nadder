@@ -1,10 +1,6 @@
 import { DataType, DataTypeBuffer, dataTypeBufferMap } from './datatype';
 
 const findType = <T extends DataType>(data: DataTypeBuffer<T>): T => {
-  if (Array.isArray(data)) {
-    if (data.length > 0 && data.every(d => typeof d == 'string')) return DataType.String as T;
-    return DataType.Any as T;
-  }
   for (const key in dataTypeBufferMap) {
     if (data instanceof dataTypeBufferMap[key]) {
       return +key as T;
@@ -15,9 +11,9 @@ const findType = <T extends DataType>(data: DataTypeBuffer<T>): T => {
 /** @internal */
 export class FlatArray<T extends DataType> {
   // type
-  t: T;
+  readonly t: T;
   // buffer
-  b: DataTypeBuffer<T>;
+  readonly b: DataTypeBuffer<T>;
 
   constructor(data: DataTypeBuffer<T>);
   constructor(type: T, size: number);

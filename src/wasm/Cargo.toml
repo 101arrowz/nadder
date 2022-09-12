@@ -1,0 +1,15 @@
+[package]
+name = "nadder"
+version = "0.0.1"
+authors = ["Arjun Barrett"]
+description = "WASM acceleration routines for nadder"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+bench = false
+test = false
+
+[profile.release]
+opt-level = "z"
+lto = true
