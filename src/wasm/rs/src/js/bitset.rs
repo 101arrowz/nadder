@@ -2,15 +2,12 @@ use super::array::Array;
 
 pub struct Bitset<'a> {
     raw: &'a mut [u32],
-    length: usize
+    length: usize,
 }
 
 impl Bitset<'_> {
     pub fn new(raw: &mut [u32], length: usize) -> Bitset<'_> {
-        Bitset {
-            raw,
-            length
-        }
+        Bitset { raw, length }
     }
 }
 
@@ -36,6 +33,5 @@ impl Array for Bitset<'_> {
                 *self.raw.get_unchecked_mut(idx >> 5) &= !flag;
             }
         }
-        
     }
 }

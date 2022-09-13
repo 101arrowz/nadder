@@ -18,7 +18,8 @@ use complex::*;
 pub struct NDView<A: Array> {
     pub strides: Vec<isize>,
     pub dims: Vec<isize>,
-    pub data: A
+    pub offset: usize,
+    pub data: A,
 }
 
 #[repr(u32)]
@@ -54,13 +55,14 @@ pub enum ForeignNDView {
     Bool(NDView<Bitset<'static>>),
 }
 
-extern {
+extern "C" {
     fn dtype(id: i32) -> DataType;
     fn ndim(id: i32) -> usize;
     fn dim(id: i32, ind: usize) -> isize;
     fn stride(id: i32, ind: usize) -> isize;
     fn buf(id: i32) -> *mut c_void;
     fn buflen(id: i32) -> usize;
+    fn off(id: i32) -> usize;
 }
 
 impl ForeignNDView {
@@ -69,6 +71,7 @@ impl ForeignNDView {
             let datatype = dtype(id);
             let ptr = buf(id);
             let len = buflen(id);
+            let offset = off(id);
             let num_dims = ndim(id);
             let dims = Vec::with_capacity(num_dims);
             let strides = Vec::with_capacity(num_dims);
@@ -80,59 +83,70 @@ impl ForeignNDView {
                 DataType::Int8 => ForeignNDView::Int8(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut i8, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut i8, len),
                 }),
                 DataType::Uint8 => ForeignNDView::Uint8(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut u8, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut u8, len),
                 }),
                 DataType::Uint8Clamped => ForeignNDView::Uint8Clamped(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut ClampedU8, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut ClampedU8, len),
                 }),
                 DataType::Int16 => ForeignNDView::Int16(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut i16, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut i16, len),
                 }),
                 DataType::Uint16 => ForeignNDView::Uint16(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut u16, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut u16, len),
                 }),
                 DataType::Int32 => ForeignNDView::Int32(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut i32, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut i32, len),
                 }),
                 DataType::Uint32 => ForeignNDView::Uint32(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut u32, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut u32, len),
                 }),
                 DataType::Float32 => ForeignNDView::Float32(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut f32, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut f32, len),
                 }),
                 DataType::Float64 => ForeignNDView::Float64(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut f64, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut f64, len),
                 }),
                 DataType::Uint64 => ForeignNDView::Uint64(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut u64, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut u64, len),
                 }),
                 DataType::Int64 => ForeignNDView::Int64(NDView {
                     strides,
                     dims,
-                    data: core::slice::from_raw_parts_mut(ptr as *mut i64, len)
+                    offset,
+                    data: core::slice::from_raw_parts_mut(ptr as *mut i64, len),
                 }),
-                _ => todo!()
+                _ => todo!(),
             }
         }
     }

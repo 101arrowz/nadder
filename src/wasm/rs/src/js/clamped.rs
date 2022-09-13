@@ -1,4 +1,4 @@
-use core::ops::{Add, Sub, Mul, Div};
+use core::ops::{Add, Div, Mul, Sub};
 
 pub struct ClampedU8(pub u8);
 
@@ -15,7 +15,6 @@ impl Add for ClampedU8 {
         self.0.saturating_add(rhs.0).into()
     }
 }
-
 
 impl Sub for ClampedU8 {
     type Output = Self;
