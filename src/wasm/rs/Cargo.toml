@@ -5,6 +5,9 @@ authors = ["Arjun Barrett"]
 description = "WASM acceleration routines for nadder"
 edition = "2021"
 
+[dependencies]
+wee_alloc = "0.4"
+
 [lib]
 crate-type = ["cdylib"]
 bench = false

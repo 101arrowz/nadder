@@ -1,3 +1,5 @@
 #![no_std]
 #![feature(core_intrinsics)]
-mod panic;
+
+mod setup;
+mod js;
