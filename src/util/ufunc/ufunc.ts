@@ -1,8 +1,11 @@
 import { Dims, NDView } from '../../core/ndarray';
-import { DataType, dataTypeNames, IndexType } from '../../core/datatype';
+import { DataType, DataTypeBuffer, dataTypeBufferMap, dataTypeNames, IndexType } from '../../core/datatype';
 import { broadcast } from '../broadcast';
 import { makeOut, ndvInternals, UnionToIntersection } from '../internal';
 import { ndarray, RecursiveArray } from '../helpers';
+import { allocHeap, freeHeap, getHeap, wasmExports } from '../../wasm';
+import { Bitset } from '../containers';
+import { FlatArray } from '../../core/flatarray';
 
 type MultiType = readonly DataType[];
 type MultiTypeArgs = readonly MultiType[];
@@ -87,6 +90,36 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
     } else {
       out = makeOut(name, dims, dtype, out);
       const assign = out[ndvInternals];
+      if (wasmExports && wasmExports[name] && where === true) {
+        const out = wasmExports[name](...inputs.map(v => {
+          return allocHeap({
+            t: v.dtype,
+            s: v['s'].slice(),
+            d: v['d'].slice(),
+            o: v['o'],
+            b: v['t'].w(),
+            l: v['t'].b.length,
+            i: v.dtype == DataType.Bool ? (v['t'].b as Bitset).offset : 0
+          })
+        }));
+        const ndv = getHeap(out);
+        freeHeap(out);
+        let buf: unknown;
+        if (ndv.t == DataType.Bool) {
+          buf = new Bitset(
+            new Uint8Array(wasmExports.memory.buffer, ndv.b, (ndv.l + 7) >> 3),
+            ndv.l,
+            ndv.i
+          );
+        } else {
+          buf = new (dataTypeBufferMap[ndv.t] as Uint8ArrayConstructor)(wasmExports.memory.buffer, ndv.b, ndv.l);
+        }
+        const ob = new FlatArray(buf as DataTypeBuffer<DataType>, ndv.b);
+        for (const input of inputs) {
+          input['t'].f();
+        }
+        return new NDView(ob, ndv.d, ndv.s, ndv.o);
+      }
       if (nin == 2) {
         const [in0, in1] = inputs;
         const callWhere = (dim: number, ind0: number, ind1: number, outInd: number, whereInd: number) => {

@@ -3,11 +3,12 @@ use super::array::Array;
 pub struct Bitset {
     raw: *mut u32,
     length: usize,
+    offset: usize
 }
 
 impl Bitset {
-    pub unsafe fn new(raw: *mut u32, length: usize) -> Bitset {
-        Bitset { raw, length }
+    pub unsafe fn new(raw: *mut u32, length: usize, offset: usize) -> Bitset {
+        Bitset { raw, length, offset }
     }
 
     pub fn ptr(&self) -> *mut u32 {
@@ -17,13 +18,18 @@ impl Bitset {
     pub fn len(&self) -> usize {
         self.length
     }
+
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
 }
 
 impl Array for Bitset {
     type Elem = bool;
 
     #[inline]
-    fn get(&self, idx: usize) -> bool {
+    fn get(&self, mut idx: usize) -> bool {
+        idx += self.offset;
         if idx > self.length {
             panic!("invalid index access");
         }
@@ -31,7 +37,8 @@ impl Array for Bitset {
     }
 
     #[inline]
-    fn set(&mut self, idx: usize, val: bool) {
+    fn set(&mut self, mut idx: usize, val: bool) {
+        idx += self.offset;
         if idx > self.length {
             panic!("invalid index modification");
         }

@@ -67,6 +67,7 @@ extern "C" {
     fn stride(id: i32, ind: usize) -> isize;
     fn buf(id: i32) -> *mut c_void;
     fn buflen(id: i32) -> usize;
+    fn bufoff(id: i32) -> usize;
     fn off(id: i32) -> usize;
     fn register(
         dtype: DataType,
@@ -76,6 +77,7 @@ extern "C" {
         buflen: usize,
         buf: *mut c_void,
         offset: usize,
+        boff: usize
     ) -> i32;
 }
 
@@ -160,13 +162,19 @@ impl ForeignNDView {
                     offset,
                     data: core::slice::from_raw_parts_mut(ptr as *mut i64, len),
                 }),
+                DataType::Bool => ForeignNDView::Bool(NDView {
+                    strides,
+                    dims,
+                    offset,
+                    data: Bitset::new(ptr as *mut u32, len, bufoff(id)),
+                }),
                 _ => todo!(),
             }
         }
     }
 
     pub fn export(&self) -> i32 {
-        let (dtype, dims, strides, offset, ptr, len) = match self {
+        let (dtype, dims, strides, offset, ptr, len, boff) = match self {
             ForeignNDView::Int8(ndview) => (
                 DataType::Int8,
                 &ndview.dims,
@@ -174,6 +182,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
             ForeignNDView::Uint8(ndview) => (
                 DataType::Uint8,
@@ -182,6 +191,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
             ForeignNDView::Uint8Clamped(ndview) => (
                 DataType::Uint8Clamped,
@@ -190,6 +200,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
             ForeignNDView::Int16(ndview) => (
                 DataType::Int16,
@@ -198,6 +209,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
             ForeignNDView::Uint16(ndview) => (
                 DataType::Uint16,
@@ -206,6 +218,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
             ForeignNDView::Int32(ndview) => (
                 DataType::Int32,
@@ -214,6 +227,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
             ForeignNDView::Uint32(ndview) => (
                 DataType::Uint32,
@@ -222,6 +236,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
             ForeignNDView::Float32(ndview) => (
                 DataType::Float32,
@@ -230,6 +245,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
             ForeignNDView::Float64(ndview) => (
                 DataType::Float64,
@@ -238,6 +254,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
             ForeignNDView::Bool(ndview) => (
                 DataType::Bool,
@@ -246,6 +263,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.ptr() as *mut c_void,
                 ndview.data.len(),
+                ndview.data.offset()
             ),
             ForeignNDView::Uint64(ndview) => (
                 DataType::Uint64,
@@ -254,6 +272,7 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
             ForeignNDView::Int64(ndview) => (
                 DataType::Int64,
@@ -262,8 +281,9 @@ impl ForeignNDView {
                 ndview.offset,
                 ndview.data.as_ptr() as *mut c_void,
                 ndview.data.len(),
+                0
             ),
         };
-        unsafe { register(dtype, dims.len(), dims.as_ptr(), strides, len, ptr, offset) }
+        unsafe { register(dtype, dims.len(), dims.as_ptr(), strides, len, ptr, offset, boff) }
     }
 }

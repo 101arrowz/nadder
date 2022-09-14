@@ -11,9 +11,21 @@ use js::*;
 use setup::*;
 
 #[no_mangle]
+pub extern "C" fn malloc(size: usize, align: usize) -> *mut u8 {
+    let layout = Layout::from_size_align(size, align).unwrap();
+    unsafe { ALLOC.alloc(layout) }
+}
+
+#[no_mangle]
+pub extern "C" fn free(ptr: *mut u8, size: usize, align: usize) {
+    let layout = Layout::from_size_align(size, align).unwrap();
+    unsafe { ALLOC.dealloc(ptr, layout) }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn add(a: i32, b: i32) -> i32 {
     let (a, b) = (ForeignNDView::import(a), ForeignNDView::import(b));
-
+    
     match (a, b) {
         (ForeignNDView::Int32(mut a), ForeignNDView::Int32(mut b)) => {
             let size = a.dims.iter().copied().fold(1, |a, b| a * b) as usize;
@@ -45,7 +57,7 @@ pub unsafe extern "C" fn add(a: i32, b: i32) -> i32 {
                 mut bi: isize,
                 mut ci: isize,
             ) {
-                if dim == 0 {
+                if dim == a.dims.len() {
                     c.data.set(
                         ci as usize,
                         a.data.get(ai as usize) + b.data.get(bi as usize),
