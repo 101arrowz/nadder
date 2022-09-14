@@ -1,7 +1,9 @@
+use alloc::string::{String, ToString};
+
 extern crate wee_alloc;
 
 #[panic_handler]
-unsafe fn panic(_: &core::panic::PanicInfo) -> ! {
+unsafe fn panic(info: &core::panic::PanicInfo) -> ! {
     core::intrinsics::abort()
 }
 
