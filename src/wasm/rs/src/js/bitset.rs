@@ -1,26 +1,36 @@
 use super::array::Array;
 
-pub struct Bitset<'a> {
-    raw: &'a mut [u32],
+pub struct Bitset {
+    raw: *mut u32,
     length: usize,
 }
 
-impl Bitset<'_> {
-    pub fn new(raw: &mut [u32], length: usize) -> Bitset<'_> {
+impl Bitset {
+    pub unsafe fn new(raw: *mut u32, length: usize) -> Bitset {
         Bitset { raw, length }
+    }
+
+    pub fn ptr(&self) -> *mut u32 {
+        self.raw
+    }
+
+    pub fn len(&self) -> usize {
+        self.length
     }
 }
 
-impl Array for Bitset<'_> {
+impl Array for Bitset {
     type Elem = bool;
 
+    #[inline]
     fn get(&self, idx: usize) -> bool {
         if idx > self.length {
             panic!("invalid index access");
         }
-        (unsafe { *self.raw.get_unchecked(idx >> 5) }) & ((1 << (idx & 31)) - 1) != 0
+        (unsafe { *self.raw.offset(idx as isize >> 5) }) & ((1 << (idx & 31)) - 1) != 0
     }
 
+    #[inline]
     fn set(&mut self, idx: usize, val: bool) {
         if idx > self.length {
             panic!("invalid index modification");
@@ -28,9 +38,9 @@ impl Array for Bitset<'_> {
         let flag = (1 << (idx & 31)) - 1;
         unsafe {
             if val {
-                *self.raw.get_unchecked_mut(idx >> 5) |= flag;
+                *self.raw.offset(idx as isize >> 5) |= flag;
             } else {
-                *self.raw.get_unchecked_mut(idx >> 5) &= !flag;
+                *self.raw.offset(idx as isize >> 5) &= !flag;
             }
         }
     }

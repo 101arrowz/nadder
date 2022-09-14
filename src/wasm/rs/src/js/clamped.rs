@@ -1,5 +1,6 @@
 use core::ops::{Add, Div, Mul, Sub};
 
+#[derive(Clone, Copy)]
 pub struct ClampedU8(pub u8);
 
 impl From<u8> for ClampedU8 {

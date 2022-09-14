@@ -10,14 +10,14 @@ mod bitset;
 use bitset::*;
 
 mod array;
-use array::*;
+pub use array::*;
 
 mod complex;
 use complex::*;
 
 pub struct NDView<A: Array> {
-    pub strides: Vec<isize>,
     pub dims: Vec<isize>,
+    pub strides: Vec<isize>,
     pub offset: usize,
     pub data: A,
 }
@@ -33,10 +33,15 @@ enum DataType {
     Uint32 = 64,
     Float32 = 128,
     Float64 = 256,
-    Complex = 512,
+    // TODO
+    // Complex = 512,
     Bool = 1024,
+    // TODO
+    // String = 2048,
     Int64 = 4096,
     Uint64 = 8192,
+    // TODO
+    // Any = 16384,
 }
 
 pub enum ForeignNDView {
@@ -50,9 +55,9 @@ pub enum ForeignNDView {
     Float32(NDView<&'static mut [f32]>),
     Float64(NDView<&'static mut [f64]>),
     // complex todo
+    Bool(NDView<Bitset>),
     Int64(NDView<&'static mut [i64]>),
     Uint64(NDView<&'static mut [u64]>),
-    Bool(NDView<Bitset<'static>>),
 }
 
 extern "C" {
@@ -63,18 +68,27 @@ extern "C" {
     fn buf(id: i32) -> *mut c_void;
     fn buflen(id: i32) -> usize;
     fn off(id: i32) -> usize;
+    fn register(
+        dtype: DataType,
+        ndim: usize,
+        dims: *const isize,
+        strides: *const isize,
+        buflen: usize,
+        buf: *mut c_void,
+        offset: usize,
+    ) -> i32;
 }
 
 impl ForeignNDView {
-    pub fn load(id: i32) -> ForeignNDView {
+    pub fn import(id: i32) -> ForeignNDView {
         unsafe {
             let datatype = dtype(id);
             let ptr = buf(id);
             let len = buflen(id);
             let offset = off(id);
             let num_dims = ndim(id);
-            let dims = Vec::with_capacity(num_dims);
-            let strides = Vec::with_capacity(num_dims);
+            let mut dims = Vec::with_capacity(num_dims);
+            let mut strides = Vec::with_capacity(num_dims);
             for i in 0..num_dims {
                 dims.push(dim(id, i));
                 strides.push(stride(id, i));
@@ -149,5 +163,107 @@ impl ForeignNDView {
                 _ => todo!(),
             }
         }
+    }
+
+    pub fn export(&self) -> i32 {
+        let (dtype, dims, strides, offset, ptr, len) = match self {
+            ForeignNDView::Int8(ndview) => (
+                DataType::Int8,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Uint8(ndview) => (
+                DataType::Uint8,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Uint8Clamped(ndview) => (
+                DataType::Uint8Clamped,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Int16(ndview) => (
+                DataType::Int16,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Uint16(ndview) => (
+                DataType::Uint16,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Int32(ndview) => (
+                DataType::Int32,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Uint32(ndview) => (
+                DataType::Uint32,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Float32(ndview) => (
+                DataType::Float32,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Float64(ndview) => (
+                DataType::Float64,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Bool(ndview) => (
+                DataType::Bool,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Uint64(ndview) => (
+                DataType::Uint64,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+            ForeignNDView::Int64(ndview) => (
+                DataType::Int64,
+                &ndview.dims,
+                ndview.strides.as_ptr(),
+                ndview.offset,
+                ndview.data.as_ptr() as *mut c_void,
+                ndview.data.len(),
+            ),
+        };
+        unsafe { register(dtype, dims.len(), dims.as_ptr(), strides, len, ptr, offset) }
     }
 }

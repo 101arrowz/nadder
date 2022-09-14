@@ -5,5 +5,10 @@ unsafe fn panic(_: &core::panic::PanicInfo) -> ! {
     core::intrinsics::abort()
 }
 
+#[alloc_error_handler]
+unsafe fn fail(_: core::alloc::Layout) -> ! {
+    core::intrinsics::abort()
+}
+
 #[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+pub static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
