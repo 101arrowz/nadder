@@ -55,7 +55,11 @@ export function allocHeap(obj: NDV) {
 }
 
 export function freeHeap(idx: number) {
-  heap[idx] = null;
+  heap[idx - 1] = null;
+  for (let i = idx - 1; i < heap.length; ++i) {
+    if (heap[i]) return;
+  }
+  heap.length = idx - 2;
 }
 
 export function getHeap(idx: number) {

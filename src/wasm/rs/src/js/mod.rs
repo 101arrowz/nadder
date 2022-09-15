@@ -6,14 +6,17 @@ use alloc::vec::Vec;
 mod clamped;
 use clamped::*;
 
+mod cast;
+pub use cast::*;
+
 mod bitset;
-use bitset::*;
+pub use bitset::*;
 
 mod array;
 pub use array::*;
 
-mod complex;
-use complex::*;
+// mod complex;
+// use complex::*;
 
 pub struct NDView<A: Array> {
     pub dims: Vec<isize>,
@@ -168,6 +171,7 @@ impl ForeignNDView {
                     offset,
                     data: Bitset::new(ptr as *mut u32, len, bufoff(id)),
                 }),
+                #[allow(unreachable_patterns)]
                 _ => todo!(),
             }
         }
