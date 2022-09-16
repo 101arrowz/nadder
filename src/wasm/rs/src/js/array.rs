@@ -10,11 +10,11 @@ impl<T: Copy> Array for &mut [T] {
 
     #[inline]
     fn get(&self, idx: usize) -> T {
-        self[idx]
+        unsafe { *self.get_unchecked(idx) }
     }
 
     #[inline]
     fn set(&mut self, idx: usize, val: T) {
-        self[idx] = val;
+        unsafe { *self.get_unchecked_mut(idx) = val; }
     }
 }

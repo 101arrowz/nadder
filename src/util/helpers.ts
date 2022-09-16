@@ -26,7 +26,9 @@ export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | Data
     throw new TypeError(`cannot reshape to non-integral dimensions (${dimensions.join(', ')})`)
   }
   const size = dimensions.reduce((a, b) => a * b, 1);
-  const src = new FlatArray(dataOrType, size);
+  const src = typeof dataOrType == 'number'
+    ? new FlatArray(dataOrType, size)
+    : new FlatArray(dataOrType);
   if (src.b.length != size) {
     throw new TypeError(`dimensions (${dimensions.join(', ')}) do not match data length ${src.b.length}`);
   }

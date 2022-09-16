@@ -1,6 +1,6 @@
 import { DataType, DataTypeBuffer, dataTypeBufferMap } from './datatype';
-import { free, malloc, unwatch, wasmExports, watchResize } from '../wasm';
-import { Bitset } from '../util';
+import { free, malloc, releaseAlloc, tagAlloc, wasmExports } from '../wasm';
+import { Bitset, globalOptions } from '../util';
 
 const findType = <T extends DataType>(data: DataTypeBuffer<T>): T => {
   for (const key in dataTypeBufferMap) {
@@ -10,7 +10,7 @@ const findType = <T extends DataType>(data: DataTypeBuffer<T>): T => {
   }
 }
 
-const aligns: Partial<Record<DataType, number>> = {
+export const aligns: Partial<Record<DataType, number>> = {
   [DataType.Int8]: 1,
   [DataType.Uint8]: 1,
   [DataType.Uint8Clamped]: 1,
@@ -36,70 +36,61 @@ export class FlatArray<T extends DataType> {
 
   constructor(data: DataTypeBuffer<T>, wasmLoc?: number);
   constructor(type: T, size: number);
-  constructor(dataOrType: T | DataTypeBuffer<T>, size: number);
-  constructor(dataOrType: T | DataTypeBuffer<T>, size?: number) {
+  constructor(dataOrType: T | DataTypeBuffer<T>, sizeOrLoc?: number) {
     if (typeof dataOrType == 'number') {
       this.t = dataOrType;
-      this.b = new dataTypeBufferMap[this.t](size) as DataTypeBuffer<T>;
-      if (this.t == DataType.Any) (this.b as unknown[]).fill(undefined);
-      this.l = 0;
+      if (globalOptions.preferWASM && aligns[dataOrType] && wasmExports) {
+        const allocLength = this.t == DataType.Bool ? (sizeOrLoc + 7) >> 3 : sizeOrLoc * (dataTypeBufferMap[this.t] as Uint8ArrayConstructor).BYTES_PER_ELEMENT;
+        this.l = malloc(allocLength, aligns[this.t]);
+        if (this.t == DataType.Bool) {
+          const nb = new Uint8Array(wasmExports.memory.buffer, this.l, allocLength);
+          this.b = new Bitset(nb, sizeOrLoc, 0) as DataTypeBuffer<T>;
+        } else {
+          this.b = new (dataTypeBufferMap[this.t] as Uint8ArrayConstructor)(wasmExports.memory.buffer, this.l, sizeOrLoc) as DataTypeBuffer<T>;
+        }
+        tagAlloc(this, allocLength);
+      } else {
+        this.b = new dataTypeBufferMap[this.t](sizeOrLoc) as DataTypeBuffer<T>;
+        if (this.t == DataType.Any) (this.b as unknown[]).fill(undefined);
+        this.l = 0;
+      }
     } else {
       this.t = findType(dataOrType);
       this.b = dataOrType;
-      this.l = size || 0;
-      if (aligns[this.t] && this.l) {
-        let reconstruct: () => void;
-        if (this.t == DataType.Bool) {
-          const { buffer, byteOffset, length } = (this.b as Bitset).buffer;
-          if (buffer == wasmExports.memory.buffer) {
-            reconstruct = () => {
-              let buf = new Uint8Array(wasmExports.memory.buffer, byteOffset, length);
-              this.b = new Bitset(buf, (this.b as Bitset).length, (this.b as Bitset).offset) as DataTypeBuffer<T>;
-            }
-          }
-        } else {
-          const { buffer, byteOffset, length } = this.b as Uint8Array;
-          if (buffer == wasmExports.memory.buffer) {
-            reconstruct = () => {
-              const buf = new (dataTypeBufferMap[this.t] as Uint8ArrayConstructor)(wasmExports.memory.buffer, byteOffset, length);
-              this.b = buf as DataTypeBuffer<T>;
-            }
-          }
-        }
-        if (reconstruct) watchResize(this.l, reconstruct);
+      this.l = sizeOrLoc || 0;
+      if (this.l) {
+        tagAlloc(this, this.t == DataType.Bool ? (this.b as Bitset).buffer.length : (this.b as Uint8Array).byteLength);
       }
     }
   }
 
   w() {
     if (this.l || !wasmExports || !aligns[this.t]) return this.l;
-    let allocLength = this.t == DataType.Bool ? (this.b as Bitset).buffer.length : (this.b as Uint8Array).byteLength;
+    const allocLength = this.t == DataType.Bool ? (this.b as Bitset).buffer.length : (this.b as Uint8Array).byteLength;
     this.l = malloc(allocLength, aligns[this.t]);
-    let reconstruct: () => void;
     if (this.l) {
       if (this.t == DataType.Bool) {
-        new Uint8Array(wasmExports.memory.buffer, this.l, allocLength).set((this.b as Bitset).buffer);
-        reconstruct = () => {
-          let buf = new Uint8Array(wasmExports.memory.buffer, this.l, allocLength);
-          this.b = new Bitset(buf, (this.b as Bitset).length, (this.b as Bitset).offset) as DataTypeBuffer<T>;
-        }
+        const nb = new Uint8Array(wasmExports.memory.buffer, this.l, allocLength);
+        nb.set((this.b as Bitset).buffer);
+        this.b = new Bitset(nb, this.b.length, (this.b as Bitset).offset) as DataTypeBuffer<T>;
       } else {
-        new (dataTypeBufferMap[this.t] as Uint8ArrayConstructor)(wasmExports.memory.buffer, this.l, this.b.length).set(this.b as Uint8Array);
-        reconstruct = () => {
-          const buf = new (dataTypeBufferMap[this.t] as Uint8ArrayConstructor)(wasmExports.memory.buffer, this.l, this.b.length);
-          this.b = buf as DataTypeBuffer<T>;
-        }
+        const nb = new (dataTypeBufferMap[this.t] as Uint8ArrayConstructor)(wasmExports.memory.buffer, this.l, this.b.length);
+        nb.set(this.b as Uint8Array);
+        this.b = nb as DataTypeBuffer<T>;
       }
-      reconstruct();
-      watchResize(this.l, reconstruct);
+      tagAlloc(this, allocLength);
     }
     return this.l;
   }
 
   f() {
     if (this.l) {
-      free(this.l, this.b.length, aligns[this.t]);
-      unwatch(this.l);
+      if (this.t == DataType.Bool) {
+        this.b = new Bitset((this.b as Bitset).buffer.slice(), this.b.length, (this.b as Bitset).offset) as DataTypeBuffer<T>;
+      } else {
+        this.b = (this.b as Uint8Array).slice() as DataTypeBuffer<T>;
+      }
+      releaseAlloc(this.l);
       this.l = 0;
     }
   }

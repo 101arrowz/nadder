@@ -1,4 +1,7 @@
-import { DataType } from '../core/datatype';
+import { NDView } from '../core/ndarray';
+import { DataType, dataTypeBufferMap } from '../core/datatype';
+import { aligns, FlatArray } from '../core/flatarray';
+import { Bitset, globalOptions } from '../util';
 
 export let wasmExports = null;
 
@@ -19,23 +22,71 @@ type NDV = {
   i: number;
 };
 
-let heap: NDV[] = [];
+const shared: NDV[] = [];
 
-const resizeHandlers = new Map<number, () => void>();
-
-export function watchResize(key: number, val: () => void) {
-  resizeHandlers.set(key, val);
+type FreeInfo = {
+  // value
+  v: { deref(): FlatArray<DataType> | undefined };
+  // ptr
+  p: number;
+  // align
+  a: number;
+  // size
+  s: number;
+  // refcount
+  r: number;
 }
 
-export function unwatch(key: number) {
-  resizeHandlers.delete(key);
+const allocs = new Map<number, FreeInfo>();
+
+export function tagAlloc(val: FlatArray<DataType>, len: number) {
+  let ref = typeof WeakRef == 'undefined'
+    ? { v: val, deref() { return this.v } }
+    : new WeakRef(val);
+
+  allocs.set(val.l, {
+    v: ref,
+    p: val.l,
+    a: aligns[val.t],
+    s: len,
+    r: 0
+  });
+}
+
+export function releaseAlloc(ptr: number) {
+  const entry = allocs.get(ptr);
+  if (entry) {
+    free(entry.p, entry.s, entry.a);
+    allocs.delete(ptr);
+  }
+}
+
+const gc = () => {
+  for (const val of allocs.values()) {
+    if (!val.v.deref()) {
+      free(val.p, val.s, val.a);
+      allocs.delete(val.p);
+    }
+  }
+}
+
+const reattachBuf = (info: FreeInfo) => {
+  const obj = info.v.deref();
+  if (obj.t == DataType.Bool) {
+    obj.b = new Bitset(new Uint8Array(wasmExports.memory.buffer, info.p, info.s), obj.b.length, (obj.b as Bitset).offset);
+  } else {
+    obj.b = new (dataTypeBufferMap[obj.t] as Uint8ArrayConstructor)(wasmExports.memory.buffer, info.p, info.s / (dataTypeBufferMap[obj.t] as Uint8ArrayConstructor).BYTES_PER_ELEMENT);
+  }
 }
 
 export function malloc(size: number, align: number) {
   let oldbuf = wasmExports.memory.buffer;
   const ptr = wasmExports.malloc(size, align);
+  gc();
   if (wasmExports.memory.buffer != oldbuf) {
-    for (const val of resizeHandlers.values()) val();
+    for (const val of allocs.values()) {
+      reattachBuf(val);
+    }
   }
   return ptr;
 }
@@ -43,27 +94,47 @@ export function malloc(size: number, align: number) {
 export function free(ptr: number, size: number, align: number) {
   let oldbuf = wasmExports.memory.buffer;
   wasmExports.free(ptr, size, align);
+  gc();
   // should never happen since wasm cant yet shrink memory
   if (wasmExports.memory.buffer != oldbuf) {
-    for (const val of resizeHandlers.values()) val();
+    for (const val of allocs.values()) {
+      reattachBuf(val);
+    }
   }
   return ptr;
 }
 
-export function allocHeap(obj: NDV) {
-  return heap.push(obj);
+export function share(v: NDView) {
+  const ndv = {
+    t: v.dtype,
+    s: v['s'].slice(),
+    d: v['d'].slice(),
+    o: v['o'],
+    b: v['t'].w(),
+    l: v['t'].b.length,
+    i: v.dtype == DataType.Bool ? (v['t'].b as Bitset).offset : 0
+  };
+  ++allocs.get(ndv.b).r;
+  return shared.push(ndv);
 }
 
-export function freeHeap(idx: number) {
-  heap[idx - 1] = null;
-  for (let i = idx - 1; i < heap.length; ++i) {
-    if (heap[i]) return;
+export function freeShared(idx: number) {
+  if (!idx) return;
+  let info = allocs.get(getShared(idx).b);
+  if (!--info.r && globalOptions.freeWASM) {
+    const val = info.v.deref();
+    if (val) val.f();
+    allocs.delete(info.p);
   }
-  heap.length = idx - 2;
+  shared[idx - 1] = null;
+  for (let i = idx - 1; i < shared.length; ++i) {
+    if (shared[i]) return;
+  }
+  shared.length = idx - 2;
 }
 
-export function getHeap(idx: number) {
-  return heap[idx - 1];
+function getShared(idx: number) {
+  return shared[idx - 1];
 }
 
 export function loadWASM(src: Uint8Array) {
@@ -71,50 +142,28 @@ export function loadWASM(src: Uint8Array) {
   const instance = new WebAssembly.Instance(module, {
     env: {
       dtype(id: number) {
-        return getHeap(id).t;
+        return getShared(id).t;
       },
       ndim(id: number) {
-        return getHeap(id).d.length;
+        return getShared(id).d.length;
       },
       dim(id: number, ind: number) {
-        return getHeap(id).d[ind];
+        return getShared(id).d[ind];
       },
       stride(id: number, ind: number) {
-        return getHeap(id).s[ind];
+        return getShared(id).s[ind];
       },
       buf(id: number) {
-        return getHeap(id).b;
+        return getShared(id).b;
       },
       buflen(id: number) {
-        return getHeap(id).l;
+        return getShared(id).l;
       },
       bufoff(id: number) {
-        return getHeap(id).i;
+        return getShared(id).i;
       },
       off(id: number) {
-        return getHeap(id).o;
-      },
-      register(
-        dtype: DataType,
-        ndim: number,
-        daddr: number,
-        saddr: number,
-        buflen: number,
-        baddr: number,
-        offset: number,
-        boff: number
-      ) {
-        const dims = new Uint32Array(wasmExports.memory.buffer, daddr, ndim);
-        const strides = new Uint32Array(wasmExports.memory.buffer, saddr, ndim);
-        return allocHeap({
-          t: dtype,
-          d: [...dims],
-          s: [...strides],
-          l: buflen,
-          b: baddr,
-          o: offset,
-          i: boff
-        });
+        return getShared(id).o;
       }
     }
   });

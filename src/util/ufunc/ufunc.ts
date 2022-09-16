@@ -3,7 +3,7 @@ import { DataType, DataTypeBuffer, dataTypeBufferMap, dataTypeNames, IndexType }
 import { broadcast } from '../broadcast';
 import { makeOut, ndvInternals, UnionToIntersection } from '../internal';
 import { ndarray, RecursiveArray } from '../helpers';
-import { allocHeap, freeHeap, getHeap, wasmExports } from '../../wasm';
+import { freeShared, share, wasmExports } from '../../wasm';
 import { Bitset } from '../containers';
 import { FlatArray } from '../../core/flatarray';
 
@@ -67,6 +67,22 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
           }
         }
       } else out = outs.map(() => ndarray(dtype, dims)) as unknown as typeof out;
+    } else {
+      out = [makeOut(name, dims, dtype, out)];
+    }
+
+    if (wasmExports && wasmExports[name] && dims.length) {
+      const wasmIn = inputs.map(share);
+      const wasmOut = (out as NDView[]).map(share);
+      const wasmWhere = where === true ? 0 : share(ndWhere);
+      wasmExports[name](...wasmIn, ...wasmOut, wasmWhere);
+      wasmIn.forEach(freeShared);
+      wasmOut.forEach(freeShared);
+      freeShared(wasmWhere);
+      return nout > 1 ? out : out[0];
+    }
+
+    if (nout > 1) {
       const assign = (out as unknown as NDView[]).map(v => v[ndvInternals]);
       const coord = dims.map(() => -1);
       // TODO: fastpaths
@@ -88,38 +104,8 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
       call(0);
       return dims.length ? out : (out as unknown as NDView[]).map(o => o['t'].b[o['o']]);
     } else {
-      out = makeOut(name, dims, dtype, out);
+      out = out[0];
       const assign = out[ndvInternals];
-      if (wasmExports && wasmExports[name] && where === true) {
-        const out = wasmExports[name](...inputs.map(v => {
-          return allocHeap({
-            t: v.dtype,
-            s: v['s'].slice(),
-            d: v['d'].slice(),
-            o: v['o'],
-            b: v['t'].w(),
-            l: v['t'].b.length,
-            i: v.dtype == DataType.Bool ? (v['t'].b as Bitset).offset : 0
-          })
-        }));
-        const ndv = getHeap(out);
-        freeHeap(out);
-        let buf: unknown;
-        if (ndv.t == DataType.Bool) {
-          buf = new Bitset(
-            new Uint8Array(wasmExports.memory.buffer, ndv.b, (ndv.l + 7) >> 3),
-            ndv.l,
-            ndv.i
-          );
-        } else {
-          buf = new (dataTypeBufferMap[ndv.t] as Uint8ArrayConstructor)(wasmExports.memory.buffer, ndv.b, ndv.l);
-        }
-        const ob = new FlatArray(buf as DataTypeBuffer<DataType>, ndv.b);
-        for (const input of inputs) {
-          input['t'].f();
-        }
-        return new NDView(ob, ndv.d, ndv.s, ndv.o);
-      }
       if (nin == 2) {
         const [in0, in1] = inputs;
         const callWhere = (dim: number, ind0: number, ind1: number, outInd: number, whereInd: number) => {

@@ -5,3 +5,4 @@ export * from './ufunc';
 export * from './linalg';
 export * from './broadcast';
 export * from './helpers';
+export * from './options';

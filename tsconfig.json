@@ -6,7 +6,8 @@
         "outDir": "lib",
         "preserveConstEnums": true,
         "stripInternal": true,
-        "declaration": true
+        "declaration": true,
+        "lib": ["ESNext", "DOM"]
     },
     "include": ["src"]
 }
