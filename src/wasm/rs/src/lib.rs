@@ -82,29 +82,134 @@ macro_rules! ufunc {
                 ) {
                     if wh.is_some() { todo!(); }
                     unsafe fn ufunc_impl_inner<$($gen : $bound),+>(
-                        $($arg: &NDView<impl Array<Item = impl Cast<$gena>>>),+,
+                        $([<$arg _view>]: &NDView<impl Array<Item = impl Cast<$gena>>>),+,
                         $([<$out _view>]: &mut NDView<impl Array<Item = $geno>>),+,
                         dim: usize,
+                        dims: &[isize],
                         $(mut [<$arg i>]: isize),+,
-                        $(mut [<$out i>]: isize),+,
+                        $(mut [<$out i>]: isize),+
                     ) {
-                        if dim == get_first!($($arg),+).dims.len() {
-                            $(let $arg: $gena = $arg.data.get([<$arg i>] as usize).cast();)+
+                        if dim == dims.len() {
+                            $(let $arg: $gena = [<$arg _view>].data.get([<$arg i>] as usize).cast();)+
                             $(let $out: $geno;)+
                             $core;
                             $([<$out _view>].data.set([<$out i>] as usize, $out);)+
+                            //ufunc_impl_inner_fast($([<$arg _view>]),+, $([<$out _view>]),+, dim, dims, $([<$arg i>]),+, $([<$out i>]),+);
                         } else {
-                            for _ in 0..get_first!($($arg),+).dims[dim] {
-                                ufunc_impl_inner($($arg),+, $([<$out _view>]),+, dim + 1, $([<$arg i>]),+, $([<$out i>]),+);
-                                $([<$arg i>] += *$arg.strides.get_unchecked(dim);)+
-                                $([<$out i>] += *[<$out _view>].strides.get_unchecked(dim);)+
+                            $(let [<$arg inc>] = *[<$arg _view>].strides.get_unchecked(dim);)+
+                            $(let [<$out inc>] = *[<$out _view>].strides.get_unchecked(dim);)+
+                            let dimsize = *dims.get_unchecked(dim);
+                            for _ in 0..dimsize {
+                                ufunc_impl_inner($([<$arg _view>]),+, $([<$out _view>]),+, dim + 1, dims, $([<$arg i>]),+, $([<$out i>]),+);
+                                $([<$arg i>] += [<$arg inc>];)+
+                                $([<$out i>] += [<$out inc>];)+
                             }
                         }
                     }
+                    unsafe fn ufunc_impl_inner_fast<$($gen : $bound),+>(
+                        $([<$arg _view>]: &NDView<impl Array<Item = impl Cast<$gena>>>),+,
+                        $([<$out _view>]: &mut NDView<impl Array<Item = $geno>>),+,
+                        dim: usize,
+                        dims: &[isize],
+                        $(mut [<$arg i>]: isize),+,
+                        $(mut [<$out i>]: isize),+
+                    ) {
+                        let left = dims.len() - dim;
+                        $(let mut [<$arg si>] = *[<$arg _view>].strides.get_unchecked(0);)+
+                        $(let mut [<$out si>] = *[<$out _view>].strides.get_unchecked(0);)+
+                        let di = *dims.get_unchecked(0);
+                        if left > 1 {
+                            $(let mut [<$arg sj>] = *[<$arg _view>].strides.get_unchecked(1);)+
+                            $(let mut [<$out sj>] = *[<$out _view>].strides.get_unchecked(1);)+
+                            let dj = *dims.get_unchecked(1);
+                            $([<$arg si>] -= (dj as isize) * [<$arg sj>];)+
+                            $([<$out si>] -= (dj as isize) * [<$out sj>];)+
+                            if left > 2 {
+                                $(let mut [<$arg sk>] = *[<$arg _view>].strides.get_unchecked(2);)+
+                                $(let mut [<$out sk>] = *[<$out _view>].strides.get_unchecked(2);)+
+                                let dk = *dims.get_unchecked(2);
+                                $([<$arg sj>] -= (dk as isize) * [<$arg sk>];)+
+                                $([<$out sj>] -= (dk as isize) * [<$out sk>];)+
+                                if left > 3 {
+                                    $(let [<$arg sl>] = *[<$arg _view>].strides.get_unchecked(3);)+
+                                    $(let [<$out sl>] = *[<$out _view>].strides.get_unchecked(3);)+
+                                    let dl = *dims.get_unchecked(3);
+                                    $([<$arg sk>] -= (dl as isize) * [<$arg sl>];)+
+                                    $([<$out sk>] -= (dl as isize) * [<$out sl>];)+
+                                    for _ in 0..di {
+                                        for _ in 0..dj {
+                                            for _ in 0..dk {
+                                                for _ in 0..dl {
+                                                    $(let $arg: $gena = [<$arg _view>].data.get([<$arg i>] as usize).cast();)+
+                                                    $(let $out: $geno;)+
+                                                    $core;
+                                                    $([<$out _view>].data.set([<$out i>] as usize, $out);)+
+                                                    $([<$arg i>] += [<$arg sl>];)+
+                                                    $([<$out i>] += [<$out sl>];)+
+                                                }
+                                                $([<$arg i>] += [<$arg sk>];)+
+                                                $([<$out i>] += [<$out sk>];)+
+                                            }
+                                            $([<$arg i>] += [<$arg sj>];)+
+                                            $([<$out i>] += [<$out sj>];)+
+                                        }
+                                        $([<$arg i>] += [<$arg si>];)+
+                                        $([<$out i>] += [<$out si>];)+
+                                    }
+                                } else {
+                                    for _ in 0..di {
+                                        for _ in 0..dj {
+                                            for _ in 0..dk {
+                                                $(let $arg: $gena = [<$arg _view>].data.get([<$arg i>] as usize).cast();)+
+                                                $(let $out: $geno;)+
+                                                $core;
+                                                $([<$out _view>].data.set([<$out i>] as usize, $out);)+
+                                                $([<$arg i>] += [<$arg sk>];)+
+                                                $([<$out i>] += [<$out sk>];)+
+                                            }
+                                            $([<$arg i>] += [<$arg sj>];)+
+                                            $([<$out i>] += [<$out sj>];)+
+                                        }
+                                        $([<$arg i>] += [<$arg si>];)+
+                                        $([<$out i>] += [<$out si>];)+
+                                    }
+                                }
+                            } else {
+                                for _ in 0..di {
+                                    for _ in 0..dj {
+                                        $(let $arg: $gena = [<$arg _view>].data.get([<$arg i>] as usize).cast();)+
+                                        $(let $out: $geno;)+
+                                        $core;
+                                        $([<$out _view>].data.set([<$out i>] as usize, $out);)+
+                                        $([<$arg i>] += [<$arg sj>];)+
+                                        $([<$out i>] += [<$out sj>];)+
+                                    }
+                                    $([<$arg i>] += [<$arg si>];)+
+                                    $([<$out i>] += [<$out si>];)+
+                                }
+                            }
+                            panic!();
+                        } else {
+                            for _ in 0..di {
+                                $(let $arg: $gena = [<$arg _view>].data.get([<$arg i>] as usize).cast();)+
+                                $(let $out: $geno;)+
+                                $core;
+                                $([<$out _view>].data.set([<$out i>] as usize, $out);)+
+                                $([<$arg i>] += [<$arg si>];)+
+                                $([<$out i>] += [<$out si>];)+
+                            }
+                        }
+                    }
+
                     $(let [<$arg i>] = [<$arg _view>].offset as isize;)+
                     $(let [<$out i>] = [<$out _view>].offset as isize;)+
+                    let dims = &get_first!($([<$arg _view>]),+).dims;
                     unsafe {
-                        ufunc_impl_inner($([<$arg _view>]),+, $([<$out _view>]),+, 0, $([<$arg i>]),+, $([<$out i>]),+);
+                        if dims.len() > 4 {
+                            ufunc_impl_inner($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
+                        } else {
+                            ufunc_impl_inner_fast($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
+                        }
                     }
                 }
                 expand_ndview!(

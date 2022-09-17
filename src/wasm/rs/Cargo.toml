@@ -17,3 +17,4 @@ test = false
 [profile.release]
 opt-level = 2
 lto = true
+incremental = true
