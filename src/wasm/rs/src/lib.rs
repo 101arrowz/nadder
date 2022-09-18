@@ -4,7 +4,7 @@
 mod js;
 mod setup;
 
-use core::{alloc::{GlobalAlloc, Layout}, ops::{Add, Sub, Mul}};
+use core::{alloc::{GlobalAlloc, Layout}, ops::{Add, Sub, Mul, Div}};
 use paste::paste;
 use js::*;
 use setup::*;
@@ -94,7 +94,6 @@ macro_rules! ufunc {
                             $(let $out: $geno;)+
                             $core;
                             $([<$out _view>].data.set([<$out i>] as usize, $out);)+
-                            //ufunc_impl_inner_fast($([<$arg _view>]),+, $([<$out _view>]),+, dim, dims, $([<$arg i>]),+, $([<$out i>]),+);
                         } else {
                             $(let [<$arg inc>] = *[<$arg _view>].strides.get_unchecked(dim);)+
                             $(let [<$out inc>] = *[<$out _view>].strides.get_unchecked(dim);)+
@@ -188,7 +187,6 @@ macro_rules! ufunc {
                                     $([<$out i>] += [<$out si>];)+
                                 }
                             }
-                            panic!();
                         } else {
                             for _ in 0..di {
                                 $(let $arg: $gena = [<$arg _view>].data.get([<$arg i>] as usize).cast();)+
@@ -205,12 +203,16 @@ macro_rules! ufunc {
                     $(let [<$out i>] = [<$out _view>].offset as isize;)+
                     let dims = &get_first!($([<$arg _view>]),+).dims;
                     unsafe {
-                        if dims.len() > 4 {
-                            ufunc_impl_inner($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
-                        } else {
-                            ufunc_impl_inner_fast($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
-                        }
+                        ufunc_impl_inner_fast($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
                     }
+
+                    // unsafe {
+                    //     if dims.len() > 4 {
+                    //         ufunc_impl_inner($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
+                    //     } else {
+                    //         ufunc_impl_inner_fast($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
+                    //     }
+                    // }
                 }
                 expand_ndview!(
                     $([<$arg _view_inner>] <- [<$arg _view>]),+,
@@ -223,14 +225,18 @@ macro_rules! ufunc {
     }
 }
 
-ufunc!(sub, (T: Sub<Output = T>), (a: T, b: T), (c: T), {
-    c = a - b;
-});
-
 ufunc!(add, (T: Add<Output = T>), (a: T, b: T), (c: T), {
     c = a + b;
 });
 
+ufunc!(sub, (T: Sub<Output = T>), (a: T, b: T), (c: T), {
+    c = a - b;
+});
+
 ufunc!(mul, (T: Mul<Output = T>), (a: T, b: T), (c: T), {
     c = a * b;
+});
+
+ufunc!(div, (T: Div<Output = T>), (a: T, b: T), (c: T), {
+    c = a / b;
 });

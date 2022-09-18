@@ -28,7 +28,13 @@ macro_rules! num_impl {
             impl Cast<ClampedU8> for $t {
                 #[inline]
                 fn cast(self) -> ClampedU8 {
-                    ClampedU8(self as u8)
+                    ClampedU8(if self < (0).cast() {
+                        0
+                    } else if self > (255).cast() {
+                        255
+                    } else {
+                        self as u8
+                    })
                 }
             }
             impl Cast<$t> for i16 {
