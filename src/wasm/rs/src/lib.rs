@@ -89,11 +89,8 @@ macro_rules! ufunc {
                         $(mut [<$arg i>]: isize),+,
                         $(mut [<$out i>]: isize),+
                     ) {
-                        if dim == dims.len() {
-                            $(let $arg: $gena = [<$arg _view>].data.get([<$arg i>] as usize).cast();)+
-                            $(let $out: $geno;)+
-                            $core;
-                            $([<$out _view>].data.set([<$out i>] as usize, $out);)+
+                        if dim == dims.len() - 4 {
+                            ufunc_impl_inner_fast($([<$arg _view>]),+, $([<$out _view>]),+, dim, dims, $([<$arg i>]),+, $([<$out i>]),+);
                         } else {
                             $(let [<$arg inc>] = *[<$arg _view>].strides.get_unchecked(dim);)+
                             $(let [<$out inc>] = *[<$out _view>].strides.get_unchecked(dim);)+
@@ -202,17 +199,14 @@ macro_rules! ufunc {
                     $(let [<$arg i>] = [<$arg _view>].offset as isize;)+
                     $(let [<$out i>] = [<$out _view>].offset as isize;)+
                     let dims = &get_first!($([<$arg _view>]),+).dims;
-                    unsafe {
-                        ufunc_impl_inner_fast($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
-                    }
 
-                    // unsafe {
-                    //     if dims.len() > 4 {
-                    //         ufunc_impl_inner($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
-                    //     } else {
-                    //         ufunc_impl_inner_fast($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
-                    //     }
-                    // }
+                    unsafe {
+                        if dims.len() > 4 {
+                            ufunc_impl_inner($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
+                        } else {
+                            ufunc_impl_inner_fast($([<$arg _view>]),+, $([<$out _view>]),+, 0, dims, $([<$arg i>]),+, $([<$out i>]),+);
+                        }
+                    }
                 }
                 expand_ndview!(
                     $([<$arg _view_inner>] <- [<$arg _view>]),+,
