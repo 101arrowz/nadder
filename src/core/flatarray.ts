@@ -11,9 +11,9 @@ const findType = <T extends DataType>(data: DataTypeBuffer<T>): T => {
 /** @internal */
 export class FlatArray<T extends DataType> {
   // type
-  readonly t: T;
+  t: T;
   // buffer
-  readonly b: DataTypeBuffer<T>;
+  b: DataTypeBuffer<T>;
 
   constructor(data: DataTypeBuffer<T>);
   constructor(type: T, size: number);

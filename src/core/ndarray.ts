@@ -377,13 +377,31 @@ export class NDView<T extends DataType, D extends Dims> {
     const target = this[ndvInternals];
     const stringify = target.t.t == DataType.Any || target.t.t == DataType.String
       ? (v: unknown) => JSON.stringify(v)
-      : (v: unknown) => v.toString()
+      : target.t.t == DataType.Float32 || target.t.t == DataType.Float64
+        ? (v: number) => v.toString() + (Number.isInteger(v) ? '.0' : '')
+        : (v: unknown) => v.toString();
     if (!target.d.length) return stringify(target.t.b[target.o]);
     let maxLen = 0;
+    let maxPre = 0;
+    let maxPost = 0;
+    let maxImagPre = 0;
+    let maxImagPost = 0;
     const list = (dim: number, ind: number): RecursiveArray<string> => {
       if (dim == target.d.length) {
         let result = stringify(target.t.b[ind]);
         maxLen = Math.max(maxLen, result.length);
+        if (target.t.t == DataType.Float32 || target.t.t == DataType.Float64) {
+          maxPre = Math.max(maxPre, result.indexOf('.'));
+          maxPost = Math.max(maxPost, result.length - result.indexOf('.'))
+        } else if (target.t.t == DataType.Complex) {
+          let midInd = result.indexOf('+');
+          if (midInd == -1) midInd = result.indexOf('-');
+          maxPre = Math.max(maxPre, result.indexOf('.'));
+          maxPost = Math.max(maxPost, midInd - maxPre);
+          let imag = result.slice(midInd);
+          maxImagPre = Math.max(maxImagPre, imag.indexOf('.'));
+          maxImagPost = Math.max(maxImagPost, imag.length - imag.indexOf('.'));
+        }
         return result;
       }
       const s = target.s[dim], d = target.d[dim];
@@ -407,10 +425,19 @@ export class NDView<T extends DataType, D extends Dims> {
     }
     const result = list(0, target.o) as RecursiveArray<string>[];
     const applyPadding = target.t.t == DataType.Float32 || target.t.t == DataType.Float64
-      ? (val: string) => val.padEnd(maxLen, ' ')
-      : target.t.t == DataType.Any
-        ? (val: string) => val
-        : (val: string) => val.padStart(maxLen, ' ');
+      ? (val: string) => val.slice(0, val.indexOf('.')).padStart(maxPre) + val.slice(val.indexOf('.')).padEnd(maxPost)
+      : target.t.t == DataType.Complex
+        ? (val: string) => {
+          let midInd = val.indexOf('+');
+          if (midInd == -1) midInd = val.indexOf('-');
+          let real = val.slice(0, midInd);
+          let imag = val.slice(midInd);
+          return real.slice(0, real.indexOf('.')).padStart(maxPre) + real.slice(real.indexOf('.')).padEnd(maxPost) +
+            imag.slice(0, imag.indexOf('.')).padStart(maxImagPre) + imag.slice(imag.indexOf('.')).padEnd(maxImagPost);
+        }
+        : target.t.t == DataType.Any
+          ? (val: string) => val
+          : (val: string) => val.padStart(maxLen);
     const concat = (arr: RecursiveArray<string>[], dim: number, indent: number) => 
       (arr as unknown as string) == '...'
         ? arr
@@ -474,7 +501,10 @@ export class NDView<T extends DataType, D extends Dims> {
   }
 
   [Symbol.toPrimitive](hint: 'number' | 'string' | 'default') {
-    if (hint == 'number') return this.ndim ? NaN : this.t.b[this.o];
+    if (!this.ndim) {
+      return hint == 'string' ? this.toString() : this.t.b[this.o];
+    }
+    if (hint == 'number') return NaN;
     const id = getFreeID();
     recentAccesses.set(id, this[ndvInternals]);
     queueMicrotask(() => recentAccesses.delete(id));
@@ -603,6 +633,38 @@ export class NDView<T extends DataType, D extends Dims> {
     }
     set(0, target.o);
     return ret;
+  }
+
+  /**
+   * Copies an ndarray as a new datatype, even if the types are not directly assignable
+   * @param dtype The datatype to cast to
+   * @returns A new array with the given datatype
+   */
+  astype<NT extends DataType>(dtype: NT): NDView<NT, D> {
+    const target = this[ndvInternals];
+    const result = ndarray(dtype, target.d);
+    if (isAssignable(dtype, target.t.t)) result.set(this);
+    else {
+      const out = result[ndvInternals];
+      const cast = dtype == DataType.Int64 || dtype == DataType.Uint64
+        ? (v: unknown) => BigInt(+v)
+        : dtype <= DataType.Float64
+          ? (v: unknown) => Number(v)
+          : (v: unknown) => v;
+      const set = (dim: number, ti: number, oi: number) => {
+        if (dim == out.d.length) {
+          out.t.b[oi] = cast(target.t.b[ti]);
+        } else {
+          for (let i = 0; i < out.d[dim]; ++i) {
+            set(dim + 1, ti, oi);
+            ti += target.s[dim];
+            oi += out.s[dim];
+          }
+        }
+      }
+      set(0, target.o, out.o);
+    }
+    return result;
   }
 
   /**

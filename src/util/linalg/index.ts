@@ -88,7 +88,7 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, opts?: MatmulO
   let mul: Calc<MT, DataType>;
   let zero: () => IndexType<DataType>;
   for (let i = 0; i < typeVals.length; ++i) {
-    if ((opts && opts.dtype == numTypes[i][1]) || typeVals[i] & a['t'].t & b['t'].t) {
+    if ((opts && opts.dtype == numTypes[i][1]) || (typeVals[i] & a['t'].t) && (typeVals[i] & b['t'].t)) {
       outType = numTypes[i][1];
       add = numTypes[i][2];
       mul = numTypes[i][3];
@@ -98,7 +98,7 @@ export const matmul = ((a: NDView<DataType>, b: NDView<DataType>, opts?: MatmulO
   }
 
   if (!outType) {
-    throw new TypeError(`cannot apply matmul to tensors of types ${dataTypeNames[a['t'].t]} and (${dataTypeNames[b['t'].t]})`);
+    throw new TypeError(`cannot apply matmul to tensors of types ${dataTypeNames[a['t'].t]} and ${dataTypeNames[b['t'].t]}`);
   }
 
   let aUp = 0, bUp = 0;
