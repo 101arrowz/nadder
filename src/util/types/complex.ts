@@ -22,8 +22,8 @@ export function wrap(obj: Complex) {
   });
   Object.defineProperty(obj, 'toString', {
     value: function() {
-      const realPost = Number.isInteger(this.real) ? '.0' : '';
-      const imagPost = Number.isInteger(this.imag) ? '.0' : '';
+      const realPost = Number.isInteger(this.real) ? '.' : '';
+      const imagPost = Number.isInteger(this.imag) ? '.' : '';
       return `${this.real + realPost}${this.imag < 0 ? '-' : '+'}${Math.abs(this.imag) + imagPost}i`;
     },
   });
