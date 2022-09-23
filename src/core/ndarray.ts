@@ -378,7 +378,7 @@ export class NDView<T extends DataType, D extends Dims> {
     const stringify = target.t.t == DataType.Any || target.t.t == DataType.String
       ? (v: unknown) => JSON.stringify(v)
       : target.t.t == DataType.Float32 || target.t.t == DataType.Float64
-        ? (v: number) => v.toString() + (Number.isInteger(v) ? '.0' : '')
+        ? (v: number) => v.toString() + (Number.isInteger(v) ? '.' : '')
         : (v: unknown) => v.toString();
     if (!target.d.length) return stringify(target.t.b[target.o]);
     let maxLen = 0;
