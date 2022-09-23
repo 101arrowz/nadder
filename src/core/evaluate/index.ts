@@ -32,6 +32,14 @@ type Token = { t: Exclude<TokenType, TokenType.Value>; v: string } | {
   v: unknown;
 };
 
+const tokenTypes: Record<TokenType, string> = [
+  'operator',
+  'identifier',
+  'bracket',
+  'value',
+  'separator'
+];
+
 /**
  * Evaluates an expression of operations potentially applied to ndarrays. This allows for more
  * natural syntax, e.g. using the `*` operator instead of `mul()`
@@ -55,8 +63,8 @@ export function evaluate(code: readonly string[], ...args: unknown[]): unknown {
   }
   let curStringInd = 0;
   let curInput = code[0];
-  const tokens: Token[] = [];
-  o: do {
+  let tokens: Token[] = [];
+  o: while (true) {
     curInput = curInput.trimStart();
     while (!curInput) {
       if (++curStringInd >= code.length) break o;
@@ -67,26 +75,42 @@ export function evaluate(code: readonly string[], ...args: unknown[]): unknown {
     switch (char) {
       case ',':
       case ':':
-        tokens.push({ t: TokenType.Separator, v: char });
+      case ';':
         curInput = curInput.slice(1);
+        tokens.push({ t: TokenType.Separator, v: char });
         break;
+      case '*':
+        if (curInput[1] == '*') char += '*';
+        // fallthrough
       case '+':
       case '-':
       case '/':
       case '%':
       case '@':
-        tokens.push({ t: TokenType.Operator, v: char });
-        curInput = curInput.slice(1);
+        if (curInput[char.length] == '=') {
+          curInput = curInput.slice(char.length + 1);
+          const prev = tokens[tokens.length - 1];
+          tokens.push({ t: TokenType.Operator, v: '=' });
+          tokens.push(prev);
+          tokens.push({ t: TokenType.Operator, v: char });
+        } else {
+          curInput = curInput.slice(char.length);
+          tokens.push({ t: TokenType.Operator, v: char });
+        }
         break;
-      case '*':
-        let result = curInput[1] == '*' ? '**' : '*';
-        curInput = curInput.slice(result.length);
-        tokens.push({ t: TokenType.Operator, v: result });
+      case '=':
+      case '>':
+      case '<':
+        if (curInput[1] == '=') char += '=';
+        curInput = curInput.slice(char.length);
+        tokens.push({ t: TokenType.Operator, v: char });
         break;
       case '(':
       case ')':
       case '[':
       case ']':
+      case '{':
+      case '}':
         tokens.push({ t: TokenType.Bracket, v: char });
         curInput = curInput.slice(1);
         break;
@@ -119,14 +143,18 @@ export function evaluate(code: readonly string[], ...args: unknown[]): unknown {
           curInput = curInput.slice(ind);
           break;
         }
-        // a-z (no capitals)
-        if (code > 96 && code < 123) {
+        // a-zA-Z
+        if (code > 96 && code < 123 || code > 64 && code < 91) {
           let ident = char;
           let ind = 1;
           while (ind < curInput.length) {
             const newCode = curInput.charCodeAt(ind);
-            // a-z0-9  
-            if ((newCode < 97 || newCode > 122) && (newCode < 65 || newCode > 90)) break;
+            // a-zA-Z0-9_
+            if ((newCode < 97 || newCode > 122) &&
+              (newCode < 65 || newCode > 90) &&
+              (newCode < 48 || newCode > 57) &&
+              (newCode != 95)
+            ) break;
             ident += curInput[ind++];
           }
           tokens.push({ t: TokenType.Identifier, v: ident });
@@ -135,13 +163,18 @@ export function evaluate(code: readonly string[], ...args: unknown[]): unknown {
         }
         throw new SyntaxError(`could not parse token from ${char}`);
     }
-  } while (true)
+  }
   
   const context = { ...ops };
 
   const cur = () => {
     if (tokens[0]) return tokens[0];
     throw new SyntaxError('unexpected EOF in expression');
+  }
+
+  const expect = (fn: (v: Token) => unknown) => {
+    if (fn(cur())) return tokens.shift();
+    throw new TypeError(`unexpected ${tokenTypes[cur().t]} ${cur().v}`);
   }
 
   const tryCall = (fn: unknown, args: unknown[]) => {
@@ -160,7 +193,7 @@ export function evaluate(code: readonly string[], ...args: unknown[]): unknown {
         const token = cur();
         if (token.t == TokenType.Bracket && token.v == ')') {
           tokens.shift();
-          return tryCall(val, []);
+          return maybeBracket(tryCall(val, []));
         }
         const args: unknown[] = [expr()];
         while (cur().t != TokenType.Bracket || cur().v != ')') {
@@ -179,7 +212,7 @@ export function evaluate(code: readonly string[], ...args: unknown[]): unknown {
         while (cur().t != TokenType.Bracket || cur().v != ']') {
           // hack for np.newaxis (+)
           while (
-            cur().t == TokenType.Separator ||
+            (cur().t == TokenType.Separator && cur().v != ';') ||
             (cur().t == TokenType.Operator && (cur().v == '+' || cur().v == '...'))
           ) {
             sliceStr += tokens.shift().v;
@@ -313,9 +346,15 @@ export function evaluate(code: readonly string[], ...args: unknown[]): unknown {
     // TODO: more stuff?
     return relExpr();
   }
+
+  // TODO: variables and loops
+  
   const result = expr();
   if (tokens[0]) {
-    throw new SyntaxError(`could not parse expression`);
+    throw new SyntaxError(`unexpected ${tokenTypes[tokens[0].t]} ${tokens[0].v}`);
+  }
+  if (!result) {
+    throw new TypeError('expression did not return a value');
   }
   return result;
 }
