@@ -593,23 +593,22 @@ export class NDView<T extends DataType, D extends Dims> {
   transpose(...order: readonly number[]): NDView<T, number[]>;
   transpose(...maybeOrder: unknown[]) {
     let order = (!maybeOrder.length || Array.isArray(maybeOrder[0]) ? maybeOrder[0] : maybeOrder) as Dims;
-    const target = this[ndvInternals];
     if (!order) {
       order = this.d.map((_, i) => -i - 1);
-    } else if (order.length != target.ndim) {
-      throw new TypeError(`order length ${order.length} does not match data dimensions (${target.d.join(', ')})`);
+    } else if (order.length != this.ndim) {
+      throw new TypeError(`order length ${order.length} does not match data dimensions (${this.d.join(', ')})`);
     }
     const newDims: number[] = [];
     const newStrides: number[] = [];
     const seen = new Set<number>();
     for (let ord of order) {
-      ord = fixInd(ord, target.ndim);
+      ord = fixInd(ord, this.ndim);
       if (seen.has(ord)) throw new TypeError(`repeated axis ${ord} in transpose`);
       seen.add(ord);
-      newStrides.push(target.s[ord]);
-      newDims.push(target.d[ord]);
+      newStrides.push(this.s[ord]);
+      newDims.push(this.d[ord]);
     }
-    return new NDView(target.t, newDims, newStrides, target.o);
+    return new NDView(this.t, newDims, newStrides, this.o);
   }
 
   /**
