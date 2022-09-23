@@ -40,6 +40,17 @@ const tokenTypes: Record<TokenType, string> = [
   'separator'
 ];
 
+// inplace ops
+const opMap = {
+  '+=': 'add',
+  '-=': 'sub',
+  '*=': 'mul',
+  '/=': 'div',
+  '%=': 'mod',
+  '@=': 'matmul',
+  '**=': 'pow'
+};
+
 const symbolic = Symbol();
 
 type Context = {
@@ -50,6 +61,7 @@ type Context = {
 };
 
 type ASTNode = (ctx: Context) => unknown;
+
 
 /**
  * Parses an expression of operations potentially applied to ndarrays. This allows for more
@@ -257,7 +269,7 @@ export function parse<T extends string | symbol | number>(code: readonly string[
       const name = token.v;
       tokens.pop();
       return maybeBracket(ctx => {
-        if (name in ctx.i) return ctx.i[name];
+        if (name in ctx.e) return ctx.e[name];
         throw new ReferenceError(`unknown identifier ${name}`);
       });
     }
@@ -375,6 +387,7 @@ export function parse<T extends string | symbol | number>(code: readonly string[
   const stmt = () => {
     let result: ASTNode = () => {};
     while (true) {
+      const oldresult = result;
       if (cur() && cur().t == TokenType.Bracket && cur().v == '}') break;
       if (cur() && cur().t == TokenType.Separator && cur().v == ';') {
         tokens.pop();
@@ -393,6 +406,7 @@ export function parse<T extends string | symbol | number>(code: readonly string[
         expect(t => t.t == TokenType.Bracket && t.v == '}');
         tokens.pop();
         result = (ctx: Context) => {
+          oldresult(ctx);
           const it = toIter(ctx);
           if (!it || typeof it[Symbol.iterator] != 'function') {
             throw new TypeError('cannot iterate over non-iterable');
@@ -402,6 +416,7 @@ export function parse<T extends string | symbol | number>(code: readonly string[
             body(ctx);
           }
         };
+        continue;
       } else if (check(t => t.t == TokenType.Identifier && t.v == 'while')) {
         tokens.pop();
         const cond = expr();
@@ -412,10 +427,12 @@ export function parse<T extends string | symbol | number>(code: readonly string[
         expect(t => t.t == TokenType.Bracket && t.v == '}');
         tokens.pop();
         result = (ctx: Context) => {
+          oldresult(ctx);
           while (cond(ctx)) {
             body(ctx);
           }
         };
+        continue;
       } else if (check(t => t.t == TokenType.Identifier || (t.t == TokenType.Value && t.v && t.v[symbolic] != null))) {
         let prevTokens = tokens.slice();
         const token = tokens.pop();
@@ -512,27 +529,16 @@ export function parse<T extends string | symbol | number>(code: readonly string[
             };
           }
         }
-        const oldresult = result;
         if (check(t => t.t == TokenType.Operator)) {
-          const opMap = {
-            '+=': 'add',
-            '-=': 'sub',
-            '*=': 'mul',
-            '/=': 'div',
-            '%=': 'mod',
-            '@=': 'matmul',
-            '**=': 'pow'
-          };
-          if (cur().v == '=') {
-            tokens.pop();
+          const op = tokens.pop().v as string;
+          if (op == '=') {
             const set = tgt.s(expr());
             result = (ctx: Context) => {
               oldresult(ctx);
               set(ctx);
             };
-          } else if (opMap[cur().v as string]) {
-            tokens.pop();
-            const modify = tgt.m(opMap[cur().v as string], expr());
+          } else if (opMap[op]) {
+            const modify = tgt.m(opMap[op], expr());
             result = (ctx: Context) => {
               oldresult(ctx);
               modify(ctx);
@@ -542,7 +548,7 @@ export function parse<T extends string | symbol | number>(code: readonly string[
         if (result == oldresult) {
           tokens = prevTokens;
           const next = expr();
-          let ret = check(t => t.t != TokenType.Separator || t.v != ';');
+          let ret = !check(t => t.t == TokenType.Separator && t.v == ';');
           result = (ctx: Context) => {
             oldresult(ctx);
             const val = next(ctx);
@@ -552,8 +558,7 @@ export function parse<T extends string | symbol | number>(code: readonly string[
         }
       } else {
         const next = expr();
-        let oldresult = result;
-        let ret = check(t => t.t != TokenType.Separator || t.v != ';');
+        let ret = !check(t => t.t == TokenType.Separator && t.v == ';');
         result = (ctx: Context) => {
           oldresult(ctx);
           const val = next(ctx);
@@ -568,9 +573,9 @@ export function parse<T extends string | symbol | number>(code: readonly string[
 
   // TODO: variables and loops
   
-  const result = expr();
-  if (tokens[0]) {
-    throw new SyntaxError(`unexpected ${tokenTypes[tokens[0].t]} ${tokens[0].v}`);
+  const result = stmt();
+  if (cur()) {
+    throw new SyntaxError(`unexpected ${tokenTypes[cur().t]} ${cur().v}`);
   }
 
   return (args: Record<T, unknown>) => result({
