@@ -251,8 +251,9 @@ export class NDView<T extends DataType, D extends Dims> {
             throw new TypeError(`invalid step ${step}`);
           }
           const t = step || 1;
-          let start = +(part[0] || (step < 0 ? nextDims[workingIndex] - 1 : 0));
-          const s = Math.min(Math.max(fixInd(start, nextDims[workingIndex], 1), 0), nextDims[workingIndex]);
+          const s = part[0]
+            ? Math.min(Math.max(fixInd(+part[0], nextDims[workingIndex], 1), 0), nextDims[workingIndex])
+            : (step < 0 ? nextDims[workingIndex] - 1 : 0)
           const e = part[1]
             ? Math.min(Math.max(fixInd(+part[1], nextDims[workingIndex], 1), 0), nextDims[workingIndex])
             : (step < 0 ? -1 : nextDims[workingIndex]);

@@ -3,8 +3,9 @@ import * as ufuncOps from '../../util/ufunc/ops';
 import * as linalgOps from '../../util/linalg';
 import * as helpers from '../../util/helpers';
 import { NDView } from '../ndarray';
+import { dataTypeNames } from '../datatype';
 
-const ops = {
+const baseCtx = {
   ...ufuncOps,
   ...linalgOps,
   ...helpers,
@@ -17,6 +18,10 @@ const ops = {
     }
     return arr.reshape(args[0]);
   }
+};
+
+for (const k in dataTypeNames) {
+  baseCtx[dataTypeNames[k]] = +k;
 }
 
 declare const enum TokenType {
@@ -24,7 +29,8 @@ declare const enum TokenType {
   Identifier = 1,
   Bracket = 2,
   Value = 3,
-  Separator = 4
+  Separator = 4,
+  Keyword = 5
 }
 
 type Token = { t: Exclude<TokenType, TokenType.Value>; v: string } | {
@@ -37,8 +43,15 @@ const tokenTypes: Record<TokenType, string> = [
   'identifier',
   'bracket',
   'value',
-  'separator'
+  'separator',
+  'keyword'
 ];
+
+const keywords = new Set([
+  'for',
+  'while',
+  'if'
+]);
 
 // inplace ops
 const opMap = {
@@ -62,6 +75,32 @@ type Context = {
 
 type ASTNode = (ctx: Context) => unknown;
 
+type FilteredArgs<T extends unknown[]> = {
+  [K in keyof T]: T[K] extends Argument<infer U> ? U : never;
+}[number];
+
+/**
+ * A symbolic argument in a DSL function
+ */
+export interface Argument<T extends string | number | symbol> {
+  [symbolic]: T;
+}
+
+/**
+ * Creates an argument to a function written in the DSL
+ * @param name The name of the argument
+ * @returns A symbolic argument that can be used in `parse`
+ */
+export function argument<T extends string | number | symbol>(name: T): Argument<T> {
+  return {
+    [symbolic]: name
+  };
+};
+
+export type ParsedFunction<T extends unknown[]> =
+  FilteredArgs<T> extends never
+    ? () => unknown
+    : (args: Record<FilteredArgs<T>, unknown>) => unknown;
 
 /**
  * Parses an expression of operations potentially applied to ndarrays. This allows for more
@@ -71,20 +110,21 @@ type ASTNode = (ctx: Context) => unknown;
  * @returns The result of evaluating the provided expression
  * @example
  * ```js
- * import { parse, arange } from 'nadder';
+ * import { parse, argument, arange } from 'nadder';
+ * 
+ * const b = arange(5 * 5).reshape([5, 5])['::-1'];
  * 
  * // Typically called as a tagged template
  * const biasedMul = parse`
- *   ${'a'} * ${'b'} + [5, 4, 3, 2, 1]
+ *   ${argument('a')} * ${b} + [5, 4, 3, 2, 1]
  * `;
  * 
  * const result = biasedMul({
- *   a: arange(5 * 5).reshape([5, 5]),
- *   b: arange(5 * 5).reshape([5, 5])['::-1']
+ *   a: arange(5 * 5).reshape([5, 5])
  * });
  * ```
  */
-export function parse<T extends string | symbol | number>(code: readonly string[], ...args: T[]) {
+export function parse<T extends unknown[]>(code: readonly string[], ...args: T): ParsedFunction<T> {
   if (!code.length || args.length != code.length - 1) {
     throw new TypeError('invalid arguments to evaluate');
   }
@@ -95,7 +135,7 @@ export function parse<T extends string | symbol | number>(code: readonly string[
     curInput = curInput.trimStart();
     while (!curInput) {
       if (++curStringInd >= code.length) break o;
-      tokens.push({ t: TokenType.Value, v: { [symbolic]: args[curStringInd - 1] } });
+      tokens.push({ t: TokenType.Value, v: args[curStringInd - 1] });
       curInput = code[curStringInd].trimStart();
     }
     let char = curInput[0];
@@ -130,13 +170,20 @@ export function parse<T extends string | symbol | number>(code: readonly string[
         tokens.push({ t: TokenType.Bracket, v: char });
         curInput = curInput.slice(1);
         break;
-      case '.':
+      case '.': {
         if (curInput[1] == '.' && curInput[2] == '.') {
           tokens.push({ t: TokenType.Operator, v: '...' });
           curInput = curInput.slice(3);
           break;
         }
-      default:
+        // inverted to support NaN
+        if (!(curInput[1] >= '0' && curInput[1] <= '9')) {
+          tokens.push({ t: TokenType.Operator, v: char });
+          curInput = curInput.slice(1);
+          break;
+        }
+      }
+      default: {
         const code = char.charCodeAt(0);
         // 0-9, or point
         if (code == 46 || (code > 47 && code < 58)) {
@@ -173,11 +220,12 @@ export function parse<T extends string | symbol | number>(code: readonly string[
             ) break;
             ident += curInput[ind++];
           }
-          tokens.push({ t: TokenType.Identifier, v: ident });
+          tokens.push({ t: keywords.has(ident) ? TokenType.Keyword : TokenType.Identifier, v: ident });
           curInput = curInput.slice(ind);
           break;
         }
         throw new SyntaxError(`could not parse token from ${char}`);
+      }
     }
   }
 
@@ -208,9 +256,11 @@ export function parse<T extends string | symbol | number>(code: readonly string[
   }
 
   const maybeBracket = (val: ASTNode): ASTNode => {
-    const bracket = cur();
-    if (bracket && bracket.t == TokenType.Bracket && (bracket.v == '(' || bracket.v == '[')) {
-      tokens.pop();
+    if (check(bracket =>
+      (bracket.t == TokenType.Bracket && (bracket.v == '(' || bracket.v == '[')) ||
+      (bracket.t == TokenType.Operator && (bracket.v == '.'))
+    )) {
+      const bracket = tokens.pop() as { t: TokenType.Identifier | TokenType.Operator; v: string };
       if (bracket.v == '(') {
         // function call
         const token = expect();
@@ -237,13 +287,24 @@ export function parse<T extends string | symbol | number>(code: readonly string[
             (expect().t == TokenType.Separator && cur().v != ';') ||
             (cur().t == TokenType.Operator && (cur().v == '+' || cur().v == '...'))
           ) {
-            sliceParts.push(() => tokens.pop().v);
+            const elem = tokens.pop();
+            sliceParts.push(() => elem.v);
           }
           if (expect().t == TokenType.Bracket && cur().v == ']') break;
           sliceParts.push(expr());
         }
         tokens.pop();
         return maybeBracket(ctx => val(ctx)[sliceParts.map(part => part(ctx)).join('')]);
+      } else {
+        const ident = expect(t => t.t == TokenType.Identifier).v as string;
+        tokens.pop();
+        return maybeBracket(ctx => {
+          const v = val(ctx);
+          const result = v[ident];
+          return typeof result == 'function'
+            ? result.bind(v)
+            : result;
+        })
       }
     }
     return val;
@@ -263,7 +324,7 @@ export function parse<T extends string | symbol | number>(code: readonly string[
       const operand = unit();
       const op = token.v == '-' ? 'neg' : token.v == '+' ? 'pos' : null;
       if (!op) throw new SyntaxError(`could not parse unary operator ${token.v}`);
-      return maybeBracket(ctx => ops[op](operand(ctx) as number));
+      return maybeBracket(ctx => baseCtx[op](operand(ctx) as number));
     }
     if (token.t == TokenType.Identifier) {
       const name = token.v;
@@ -311,7 +372,7 @@ export function parse<T extends string | symbol | number>(code: readonly string[
     return (ctx: Context) => {
       const l = left(ctx) as number;
       const r = right(ctx) as number;
-      return ops[op](l, r);
+      return baseCtx[op](l, r);
     }
   }
 
@@ -325,9 +386,9 @@ export function parse<T extends string | symbol | number>(code: readonly string[
           left = (ctx: Context) => {
             const l = left(ctx) as number;
             const r = right(ctx) as number;
-            if (l === Math.E) return ops.exp(r);
-            if (l === 2) return ops.exp2(r);
-            return ops.pow(l, r);
+            if (l === Math.E) return baseCtx.exp(r);
+            if (l === 2) return baseCtx.exp2(r);
+            return baseCtx.pow(l, r);
           };
           break;
         default: return left;
@@ -388,12 +449,12 @@ export function parse<T extends string | symbol | number>(code: readonly string[
     let result: ASTNode = () => {};
     while (true) {
       const oldresult = result;
-      if (cur() && cur().t == TokenType.Bracket && cur().v == '}') break;
-      if (cur() && cur().t == TokenType.Separator && cur().v == ';') {
+      if (!cur() || cur().t == TokenType.Bracket && cur().v == '}') break;
+      if (cur().t == TokenType.Separator && cur().v == ';') {
         tokens.pop();
         continue;
       }
-      if (check(t => t.t == TokenType.Identifier && t.v == 'for')) {
+      if (check(t => t.t == TokenType.Keyword && t.v == 'for')) {
         tokens.pop();
         const name = expect(t => t.t == TokenType.Identifier).v as string;
         tokens.pop();
@@ -417,10 +478,9 @@ export function parse<T extends string | symbol | number>(code: readonly string[
           }
         };
         continue;
-      } else if (check(t => t.t == TokenType.Identifier && t.v == 'while')) {
+      } else if (check(t => t.t == TokenType.Keyword && t.v == 'while')) {
         tokens.pop();
         const cond = expr();
-        tokens.pop();
         expect(t => t.t == TokenType.Bracket && t.v == '{');
         tokens.pop();
         const body = stmt();
@@ -433,38 +493,68 @@ export function parse<T extends string | symbol | number>(code: readonly string[
           }
         };
         continue;
-      } else if (check(t => t.t == TokenType.Identifier || (t.t == TokenType.Value && t.v && t.v[symbolic] != null))) {
+      } else if (check(t => t.t == TokenType.Keyword && t.v == 'if')) {
+        tokens.pop();
+        const cond = expr();
+        expect(t => t.t == TokenType.Bracket && t.v == '{');
+        tokens.pop();
+        const body = stmt();
+        expect(t => t.t == TokenType.Bracket && t.v == '}');
+        tokens.pop();
+        result = (ctx: Context) => {
+          oldresult(ctx);
+          if (cond(ctx)) {
+            body(ctx);
+          }
+        };
+        continue;
+      } else if (check(t => t.t == TokenType.Identifier || t.t == TokenType.Value)) {
         let prevTokens = tokens.slice();
         const token = tokens.pop();
         let tgt = {
           g: (ctx: Context) => {
             if (token.t == TokenType.Identifier) return ctx.e[token.v];
-            else return ctx.i[token.v[symbolic]];
+            else if (token.v && token.v[symbolic] != null) return ctx.i[token.v[symbolic]];
+            else return token.v;
           },
-          s: (v: ASTNode) => (ctx: Context) => {
-            if (token.t == TokenType.Identifier) ctx.e[token.v] = v(ctx);
-            else ctx.i[token.v[symbolic]] = v(ctx);
-          },
-          m: (op: string, b: ASTNode) => (ctx: Context) => {
-            if (token.t == TokenType.Identifier) {
-              let a = ctx.e[token.v];
-              if (a && a[ndvInternals]) {
-                ops[op](a, b(ctx), { out: a });
-              } else {
-                ctx.e[token.v] = ops[op](a, b(ctx));
-              }
+          s: (v: ASTNode) => {
+            if (!token.v || token.v[symbolic] == null) {
+              throw new SyntaxError('cannot set non-symbolic value');
             }
-            else {
-              let a = ctx.i[token.v[symbolic]];
-              if (a && a[ndvInternals]) {
-                ops[op](a, b(ctx), { out: a });
+            return (ctx: Context) => {
+              if (token.t == TokenType.Identifier) ctx.e[token.v] = v(ctx);
+              else ctx.i[token.v[symbolic]] = v(ctx);
+            }
+          },
+          m: (op: string, b: ASTNode) => {
+            if (!token.v || (token.v[symbolic] == null && !token.v[ndvInternals])) {
+              throw new SyntaxError('cannot set non-symbolic value');
+            }
+            return (ctx: Context) => {
+              if (token.t == TokenType.Identifier) {
+                let a = ctx.e[token.v];
+                if (a && a[ndvInternals]) {
+                  baseCtx[op](a, b(ctx), { out: a });
+                } else {
+                  ctx.e[token.v] = baseCtx[op](a, b(ctx));
+                }
+              } else if (token.v[symbolic]) {
+                let a = ctx.i[token.v[symbolic]];
+                if (a && a[ndvInternals]) {
+                  baseCtx[op](a, b(ctx), { out: a });
+                } else {
+                  ctx.i[token.v[symbolic]] = baseCtx[op](a, b(ctx));
+                }
               } else {
-                ctx.i[token.v[symbolic]] = ops[op](a, b(ctx));
+                baseCtx[op](token.v, b(ctx), { out: token.v });
               }
             }
           }
         };
-        while (check(t => t.t == TokenType.Bracket && (t.v == '(' || t.v == '['))) {
+        while (check(bracket =>
+          (bracket.t == TokenType.Bracket && (bracket.v == '(' || bracket.v == '[')) ||
+          (bracket.t == TokenType.Operator && (bracket.v == '.'))
+        )) {
           const bracket = tokens.pop();
           if (bracket.v == '(') {
             // function call
@@ -503,7 +593,8 @@ export function parse<T extends string | symbol | number>(code: readonly string[
                 (expect().t == TokenType.Separator && cur().v != ';') ||
                 (cur().t == TokenType.Operator && (cur().v == '+' || cur().v == '...'))
               ) {
-                sliceParts.push(() => tokens.pop().v);
+                const elem = tokens.pop();
+                sliceParts.push(() => elem.v);
               }
               if (expect().t == TokenType.Bracket && cur().v == ']') break;
               sliceParts.push(expr());
@@ -519,11 +610,36 @@ export function parse<T extends string | symbol | number>(code: readonly string[
               m: (op: string, b: ASTNode) => (ctx: Context) => {
                 const base = oldt.g(ctx);
                 const slice = makeSlice(ctx);
-                if (base && base[ndvInternals]) {
-                  const ar = base[slice];
-                  ops[op](ar, b(ctx), { out: ar });
+                const tgt = base[slice];
+                if (tgt && tgt[ndvInternals]) {
+                  baseCtx[op](tgt, b(ctx), { out: tgt });
                 } else {
-                  base[slice] = ops[op](base[slice], b(ctx));
+                  base[slice] = baseCtx[op](tgt, b(ctx));
+                }
+              }
+            };
+          } else {
+            const ident = expect(t => t.t == TokenType.Identifier).v as string;
+            tokens.pop();
+            const oldt = tgt;
+            tgt = {
+              g: (ctx: Context) => {
+                const v = oldt.g(ctx);
+                const result = v[ident];
+                return typeof result == 'function'
+                  ? result.bind(v)
+                  : result;
+              },
+              s: (v: ASTNode) => (ctx: Context) => {
+                oldt.g(ctx)[ident] = v(ctx);
+              },
+              m: (op: string, b: ASTNode) => (ctx: Context) => {
+                const base = oldt.g(ctx);
+                const tgt = base[ident];
+                if (tgt && tgt[ndvInternals]) {
+                  baseCtx[op](tgt, b(ctx), { out: tgt });
+                } else {
+                  base[ident] = baseCtx[op](tgt, b(ctx));
                 }
               }
             };
@@ -578,9 +694,9 @@ export function parse<T extends string | symbol | number>(code: readonly string[
     throw new SyntaxError(`unexpected ${tokenTypes[cur().t]} ${cur().v}`);
   }
 
-  return (args: Record<T, unknown>) => result({
-    i: args,
-    e: { ...ops }
+  return (args?: Record<FilteredArgs<T>, unknown>) => result({
+    i: args || {},
+    e: { ...baseCtx }
   });
 }
 
@@ -602,10 +718,5 @@ export function parse<T extends string | symbol | number>(code: readonly string[
  * ```
  */
 export function evaluate(code: readonly string[], ...args: unknown[]): unknown {
-  const parsed = parse(code, ...args.map((_, i) => i));
-  const result = parsed(args);
-  if (!result) {
-    throw new TypeError('expression did not return a value');
-  }
-  return result;
+  return parse(code, ...args)();
 }

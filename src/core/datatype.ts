@@ -21,7 +21,7 @@ export const enum DataType {
 export const dataTypeNames = {
   [DataType.Int8]: 'int8',
   [DataType.Uint8]: 'uint8',
-  [DataType.Uint8Clamped]: 'uint8-clamped',
+  [DataType.Uint8Clamped]: 'uint8clamped',
   [DataType.Int16]: 'int16',
   [DataType.Uint16]: 'uint16',
   [DataType.Int32]: 'int32',
