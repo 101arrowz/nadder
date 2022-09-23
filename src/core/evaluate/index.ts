@@ -518,7 +518,7 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
             else return token.v;
           },
           s: (v: ASTNode) => {
-            if (!token.v || token.v[symbolic] == null) {
+            if (token.t == TokenType.Value && (!token.v || token.v[symbolic] == null)) {
               throw new SyntaxError('cannot set non-symbolic value');
             }
             return (ctx: Context) => {
@@ -527,8 +527,10 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
             }
           },
           m: (op: string, b: ASTNode) => {
-            if (!token.v || (token.v[symbolic] == null && !token.v[ndvInternals])) {
-              throw new SyntaxError('cannot set non-symbolic value');
+            if (token.t == TokenType.Value &&
+              (!token.v || (token.v[symbolic] == null && !token.v[ndvInternals]))
+            ) {
+              throw new SyntaxError('cannot modifys non-symbolic value');
             }
             return (ctx: Context) => {
               if (token.t == TokenType.Identifier) {
