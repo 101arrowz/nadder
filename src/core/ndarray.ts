@@ -81,7 +81,7 @@ export class NDView<T extends DataType, D extends Dims> {
               const newPart = parts[j];
               if (newPart.length == 1) {
                 if (newPart[0] == '...') {
-                  throw new TypeError('only one ellipsis allowed in index');
+                  throw new SyntaxError('only one ellipsis allowed in index');
                 } else if (newPart[0].startsWith(indexablePrefix)) {
                   let ind = indexablePrefix.length;
                   for (; ind < part[0].length; ++ind) {
@@ -230,7 +230,7 @@ export class NDView<T extends DataType, D extends Dims> {
             }
             throw new TypeError('ndarray index expired: ensure slices are used immediately after creation');
           }
-          if (!part[0]) throw new TypeError('invalid syntax (empty slice)');
+          if (!part[0]) throw new SyntaxError('invalid syntax (empty slice)');
           if (part[0] == 'true' || part[0] == 'false') {
             nextDims.splice(workingIndex, 0, +(part[0] == 'true'));
             nextStride.splice(workingIndex, 0, 0);
@@ -243,7 +243,7 @@ export class NDView<T extends DataType, D extends Dims> {
           ind = fixInd(ind, nextDims.splice(workingIndex, 1)[0]);
           nextOffset += ind * nextStride.splice(workingIndex, 1)[0]
         } else if (part.length > 3) {
-          throw new TypeError(`invalid slice ${key}`);
+          throw new SyntaxError(`invalid slice ${key}`);
         } else {
           if (workingIndex >= nextDims.length) throw new TypeError('cannot slice 0D ndarray');
           let step = +(part[2] || 1);

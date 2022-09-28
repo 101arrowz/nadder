@@ -37,8 +37,9 @@ export class Bitset {
     if (typeof srcOrSize == 'number') {
       this.buffer = new Uint8Array((srcOrSize + 7) >> 3);
       size = srcOrSize;
-      this.offset = 0;
+      this.offset = offset = 0;
     } else {
+      if (!offset) offset = 0;
       if (size + offset > srcOrSize.length << 3) {
         throw new TypeError('bitset buffer too small');
       }

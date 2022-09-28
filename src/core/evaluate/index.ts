@@ -158,6 +158,10 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
     }
     let char = curInput[0];
     switch (char) {
+      case '#': {
+        curInput = curInput.slice((curInput.indexOf('\n') + 1) || curInput.length);
+        break;
+      }
       case ',':
       case ':':
       case ';':
