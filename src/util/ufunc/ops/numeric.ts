@@ -13,13 +13,8 @@ const complexTypeImpl = (complexImpl: (a: Complex, b: Complex) => Complex) => {
   return opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64, DataType.Complex], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64, DataType.Complex]] as const, [DataType.Complex] as const, fixedComplexImpl);
 }
 
-const typeImpls = (impl: (a: number, b: number) => number, bigImpl: (a: bigint, b: bigint) => bigint) => {
+const intTypeImpls = (impl: (a: number, b: number) => number, bigImpl: (a: bigint, b: bigint) => bigint) => {
   const fixedBoolImpl = (a: boolean, b: boolean) => impl(a as unknown as number, b as unknown as number) as unknown as boolean;
-  const fixedSmallImpl = (a: number | boolean | bigint, b: number | boolean | bigint) => {
-    if (typeof a == 'bigint') a = Number(a);
-    if (typeof b == 'bigint') b = Number(b);
-    return impl(a as number, b as number);
-  };
   const fixedBigImpl = (a: number | boolean | bigint, b: number | boolean | bigint) => {
     if (typeof a == 'number' || typeof a == 'boolean') a = BigInt(a);
     if (typeof b == 'number' || typeof b == 'boolean') b = BigInt(b);
@@ -35,7 +30,18 @@ const typeImpls = (impl: (a: number, b: number) => number, bigImpl: (a: bigint, 
     opImpl([[DataType.Bool, DataType.Uint8, DataType.Uint8Clamped, DataType.Uint16, DataType.Uint32], [DataType.Bool, DataType.Uint8, DataType.Uint8Clamped, DataType.Uint16, DataType.Uint32]] as const, [DataType.Uint32] as const, impl),
     opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32]] as const, [DataType.Int32] as const, impl),
     opImpl([[DataType.Bool, DataType.Uint8, DataType.Uint8Clamped, DataType.Uint16, DataType.Uint32, DataType.Uint64], [DataType.Bool, DataType.Uint8, DataType.Uint8Clamped, DataType.Uint16, DataType.Uint32, DataType.Uint64]] as const, [DataType.Uint64] as const, fixedBigImpl),
-    opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Int64], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Int64]] as const, [DataType.Int64] as const, fixedBigImpl),
+    opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Int64], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Int64]] as const, [DataType.Int64] as const, fixedBigImpl)
+  ] as const;
+}
+
+const typeImpls = (impl: (a: number, b: number) => number, bigImpl: (a: bigint, b: bigint) => bigint) => {
+  const fixedSmallImpl = (a: number | boolean | bigint, b: number | boolean | bigint) => {
+    if (typeof a == 'bigint') a = Number(a);
+    if (typeof b == 'bigint') b = Number(b);
+    return impl(a as number, b as number);
+  };
+  return [
+    ...intTypeImpls(impl, bigImpl),
     opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Float32]] as const, [DataType.Float32] as const, impl),
     opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64]] as const, [DataType.Float64] as const, fixedSmallImpl),
   ] as const;
@@ -70,6 +76,58 @@ export const fdiv = ufunc(
   2,
   1,
   ...typeImpls((a, b) => Math.floor(a / b), (a, b) => a / b)
+);
+
+export const bitand = ufunc(
+  'bitand',
+  2,
+  1,
+  ...intTypeImpls((a, b) => a & b, (a, b) => a & b)
+);
+
+export const bitor = ufunc(
+  'bitor',
+  2,
+  1,
+  ...intTypeImpls((a, b) => a | b, (a, b) => a | b)
+);
+
+export const bitxor = ufunc(
+  'bitxor',
+  2,
+  1,
+  ...intTypeImpls((a, b) => a ^ b, (a, b) => a ^ b)
+);
+
+export const shl = ufunc(
+  'shl',
+  2,
+  1,
+  ...intTypeImpls((a, b) => a << b, (a, b) => a << b)
+);
+
+export const shr = ufunc(
+  'shr',
+  2,
+  1,
+  ...intTypeImpls((a, b) => a >> b, (a, b) => a >> b)
+);
+
+const bnot = <T extends number | bigint>(a: T): T => ~a as T;
+
+export const bitnot = ufunc(
+  'bitnot',
+  1,
+  1,
+  opImpl([[DataType.Bool, DataType.Int8]] as const, [DataType.Int8] as const, bnot as (a: number | boolean) => number),
+  opImpl([[DataType.Uint8]] as const, [DataType.Uint8] as const, bnot),
+  opImpl([[DataType.Uint8Clamped]] as const, [DataType.Uint8Clamped] as const, bnot),
+  opImpl([[DataType.Int16]] as const, [DataType.Int16] as const, bnot),
+  opImpl([[DataType.Uint16]] as const, [DataType.Uint16] as const, bnot),
+  opImpl([[DataType.Int32]] as const, [DataType.Int32] as const, bnot),
+  opImpl([[DataType.Uint32]] as const, [DataType.Uint32] as const, bnot),
+  opImpl([[DataType.Int64]] as const, [DataType.Int64] as const, bnot),
+  opImpl([[DataType.Uint64]] as const, [DataType.Uint64] as const, bnot),
 );
 
 export const pow = ufunc(
@@ -109,8 +167,8 @@ export const abs = ufunc(
   opImpl([[DataType.Complex]] as const, [DataType.Float64] as const, (a) => +a),
 );
 
-export const conjugate = ufunc(
-  'conjugate',
+export const conj = ufunc(
+  'conj',
   1,
   1,
   opImpl([[DataType.Bool, DataType.Int8]] as const, [DataType.Int8] as const, (a) => +a),
@@ -126,8 +184,6 @@ export const conjugate = ufunc(
   opImpl([[DataType.Float64]] as const, [DataType.Float64] as const, identity),
   opImpl([[DataType.Complex]] as const, [DataType.Complex] as const, (a) => ({ real: a.real, imag: -a.imag })),
 );
-
-export const conj = conjugate;
 
 export const pos = ufunc(
   'pos',
@@ -277,4 +333,91 @@ export const tan = ufunc(
       imag: Math.sinh(2 * a.imag) / denom,
     };
   })
+);
+
+
+const relopImpl = (impl: (a: boolean | number | bigint, b: boolean | number | bigint) => boolean) => 
+  opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64]] as const, [DataType.Bool] as const, impl);
+
+const complexRelopImpl = (impl: (a: Complex, b: Complex) => boolean) => 
+  opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64, DataType.Complex], [DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64, DataType.Complex]] as const, [DataType.Bool] as const, (a, b) => {
+    if (typeof a != 'object') a = { real: Number(a), imag: 0 };
+    if (typeof b != 'object') b = { real: Number(b), imag: 0 };
+    return impl(a, b);
+  });
+
+export const gt = ufunc(
+  'gt',
+  2,
+  1,
+  relopImpl((a, b) => a > b)
+);
+
+export const gte = ufunc(
+  'gte',
+  2,
+  1,
+  relopImpl((a, b) => a >= b)
+);
+
+export const lt = ufunc(
+  'gt',
+  2,
+  1,
+  relopImpl((a, b) => a < b)
+);
+
+export const lte = ufunc(
+  'gte',
+  2,
+  1,
+  relopImpl((a, b) => a <= b)
+);
+
+export const ne = ufunc(
+  'ne',
+  2,
+  1,
+  relopImpl((a, b) => a != b),
+  complexRelopImpl((a, b) => a.real != b.real || a.imag != b.imag)
+);
+
+export const eq = ufunc(
+  'eq',
+  2,
+  1,
+  relopImpl((a, b) => a == b),
+  complexRelopImpl((a, b) => a.real == b.real && a.imag == b.imag)
+);
+
+export const and = ufunc(
+  'and',
+  2,
+  1,
+  relopImpl((a, b) => (a && b) as unknown as boolean),
+  complexRelopImpl((a, b) => ((a.real || a.imag) && (b.real || b.imag)) as unknown as boolean)
+);
+
+export const or = ufunc(
+  'or',
+  2,
+  1,
+  relopImpl((a, b) => (a || b) as unknown as boolean),
+  complexRelopImpl((a, b) => ((a.real || a.imag) || (b.real || b.imag)) as unknown as boolean)
+);
+
+export const xor = ufunc(
+  'xor',
+  2,
+  1,
+  relopImpl((a, b) => !a != !b),
+  complexRelopImpl((a, b) => !a.real && !a.imag != !b.real && !b.imag)
+);
+
+export const not = ufunc(
+  'not',
+  1,
+  1,
+  opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64]] as const, [DataType.Bool] as const, a => !a),
+  opImpl([[DataType.Bool, DataType.Int8, DataType.Uint8, DataType.Uint8Clamped, DataType.Int16, DataType.Uint16, DataType.Int32, DataType.Uint32, DataType.Float32, DataType.Int64, DataType.Uint64, DataType.Float64, DataType.Complex]] as const, [DataType.Bool] as const, a => typeof a == 'object' ? !a.real && !a.imag : !a)
 );

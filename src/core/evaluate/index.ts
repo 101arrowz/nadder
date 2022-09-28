@@ -1,9 +1,9 @@
-import { ndvInternals } from '../../util';
+import { broadcast, ndvInternals } from '../../util';
 import * as ufuncOps from '../../util/ufunc/ops';
 import * as linalgOps from '../../util/linalg';
 import * as helpers from '../../util/helpers';
 import { NDView } from '../ndarray';
-import { dataTypeNames } from '../datatype';
+import { DataType, dataTypeNames } from '../datatype';
 
 const baseCtx = {
   ...ufuncOps,
@@ -50,7 +50,8 @@ const tokenTypes: Record<TokenType, string> = [
 const keywords = new Set([
   'for',
   'while',
-  'if'
+  'if',
+  'else'
 ]);
 
 // inplace ops
@@ -61,7 +62,21 @@ const opMap = {
   '/=': 'div',
   '%=': 'mod',
   '@=': 'matmul',
-  '**=': 'pow'
+  '**=': 'pow',
+  '<<=': 'shl',
+  '>>=': 'shr',
+  '&=': 'bitand',
+  '^=': 'bitxor',
+  '|=': 'bitor',
+  '&&=': 'and',
+  '||=': 'or',
+};
+
+const unaryOpMap = {
+  '+': 'pos',
+  '-': 'neg',
+  '!': 'not',
+  '~': 'bitnot'
 };
 
 const symbolic = Symbol();
@@ -92,6 +107,9 @@ export interface Argument<T extends string | number | symbol> {
  * @returns A symbolic argument that can be used in `parse`
  */
 export function argument<T extends string | number | symbol>(name: T): Argument<T> {
+  if (typeof name != 'string' && typeof name != 'number' && typeof name != 'symbol') {
+    throw new TypeError('argument name must be a string, number, or symbol');
+  }
   return {
     [symbolic]: name
   };
@@ -146,21 +164,39 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
         curInput = curInput.slice(1);
         tokens.push({ t: TokenType.Separator, v: char });
         break;
+      case '~':
+        curInput = curInput.slice(1);
+        tokens.push({ t: TokenType.Operator, v: char });
+        break;
       case '*':
         if (curInput[1] == '*') char += '*';
         // fallthrough
       case '+':
       case '-':
-      case '/':
       case '%':
       case '@':
+      case '^':
       case '=':
-      case '>':
-      case '<':
+      case '!':
         if (curInput[1] == '=') char += '=';
         curInput = curInput.slice(char.length);
         tokens.push({ t: TokenType.Operator, v: char });
         break;
+      case '>':
+      case '<':
+      case '&':
+      case '|':
+      case '/': {
+        let ind = 1;
+        if (curInput[ind] == char) {
+          char += char;
+          ++ind;
+        }
+        if (curInput[ind] == '=') char += '='
+        curInput = curInput.slice(char.length);
+        tokens.push({ t: TokenType.Operator, v: char });
+        break;
+      }
       case '(':
       case ')':
       case '[':
@@ -255,6 +291,78 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
     return callable(...params);
   }
 
+  const slice = () => {
+    let sliceParts: ASTNode[] = [];
+    while (expect().t != TokenType.Bracket || cur().v != ']') {
+      // hack for np.newaxis (+)
+      while (
+        (expect().t == TokenType.Separator && cur().v != ';') ||
+        (cur().t == TokenType.Operator && (cur().v == '+' || cur().v == '...'))
+      ) {
+        const elem = tokens.pop();
+        sliceParts.push(() => elem.v);
+      }
+      if (expect().t == TokenType.Bracket && cur().v == ']') break;
+      sliceParts.push(expr());
+    }
+    tokens.pop();
+    return (ctx: Context) => sliceParts.map(v => v(ctx)).join('');
+  };
+
+  const funcArgs = () => {
+    const token = expect();
+    if (token.t == TokenType.Bracket && token.v == ')') {
+      tokens.pop();
+      return [];
+    }
+    let postArg: Record<string, ASTNode>;
+    const args: ASTNode[] = [];
+    while (true) {
+      let pos = 1;
+      if (check(v => v.t == TokenType.Identifier)) {
+        const tok = tokens.pop();
+        if (check(v => v.t == TokenType.Operator && v.v == '=')) {
+          tokens.pop();
+          if (!postArg) postArg = {};
+          postArg[tok.v as string] = expr();
+          pos = 0;
+        } else tokens.push(tok);
+      }
+      if (pos) {
+        if (postArg) {
+          throw new SyntaxError('cannot have keyword arguments after positional arguments');
+        }
+        args.push(expr());
+      }
+      const sep = expect();
+      tokens.pop();
+      if (sep.t == TokenType.Bracket && sep.v == ')') break;
+      if (sep.t != TokenType.Separator || sep.v != ',') {
+        throw new SyntaxError(`expected comma in argument list, got ${tokenTypes[sep.t]} ${sep.v}`);
+      }
+    }
+    if (postArg) {
+      args.push(ctx => {
+        const result: Record<string, unknown> = {};
+        for (const k in postArg) {
+          result[k] = postArg[k](ctx);
+        }
+        return result;
+      })
+    }
+    return args;
+  };
+
+  const condVal = (ret: unknown) => {
+    if (ret && ret[ndvInternals]) {
+      if (!(ret as NDView).ndim) return (ret as NDView).get();
+      throw new TypeError('cannot check truthiness of array; use any() or all()');
+    }
+    return ret;
+  }
+
+  const cond = (val: ASTNode): ASTNode => (ctx: Context) => condVal(val(ctx));
+
   const maybeBracket = (val: ASTNode): ASTNode => {
     if (check(bracket =>
       (bracket.t == TokenType.Bracket && (bracket.v == '(' || bracket.v == '[')) ||
@@ -262,39 +370,10 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
     )) {
       const bracket = tokens.pop() as { t: TokenType.Identifier | TokenType.Operator; v: string };
       if (bracket.v == '(') {
-        // function call
-        const token = expect();
-        if (token.t == TokenType.Bracket && token.v == ')') {
-          tokens.pop();
-          return maybeBracket(tryCall(val, []));
-        }
-        const args: ASTNode[] = [expr()];
-        while (expect().t != TokenType.Bracket || cur().v != ')') {
-          const sep = tokens.pop();
-          if (sep.t != TokenType.Separator || sep.v != ',') {
-            throw new SyntaxError(`expected comma in argument list, got ${tokenTypes[sep.t]} ${sep.v}`);
-          }
-          args.push(expr());
-        }
-        tokens.pop();
-        return maybeBracket(tryCall(val, args));
+        return maybeBracket(tryCall(val, funcArgs()));
       } else if (bracket.v == '[') {
-        // slice index
-        let sliceParts: ASTNode[] = [];
-        while (expect().t != TokenType.Bracket || cur().v != ']') {
-          // hack for np.newaxis (+)
-          while (
-            (expect().t == TokenType.Separator && cur().v != ';') ||
-            (cur().t == TokenType.Operator && (cur().v == '+' || cur().v == '...'))
-          ) {
-            const elem = tokens.pop();
-            sliceParts.push(() => elem.v);
-          }
-          if (expect().t == TokenType.Bracket && cur().v == ']') break;
-          sliceParts.push(expr());
-        }
-        tokens.pop();
-        return maybeBracket(ctx => val(ctx)[sliceParts.map(part => part(ctx)).join('')]);
+        const res = slice();
+        return maybeBracket(ctx => val(ctx)[res(ctx)]);
       } else {
         const ident = expect(t => t.t == TokenType.Identifier).v as string;
         tokens.pop();
@@ -322,7 +401,7 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
     if (token.t == TokenType.Operator) {
       tokens.pop();
       const operand = unit();
-      const op = token.v == '-' ? 'neg' : token.v == '+' ? 'pos' : null;
+      const op = unaryOpMap[token.v];
       if (!op) throw new SyntaxError(`could not parse unary operator ${token.v}`);
       return maybeBracket(ctx => baseCtx[op](operand(ctx) as number));
     }
@@ -377,72 +456,110 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
   }
 
   const powExpr = () => {
-    let left = unit();
+    let base = unit();
+    if (check(t => t.t == TokenType.Operator && t.v == '**')) {
+      tokens.pop();
+      const right = powExpr();
+      return (ctx: Context) => {
+        const l = base(ctx) as number;
+        const r = right(ctx) as number;
+        if (l === Math.E) return baseCtx.exp(r);
+        if (l === 2) return baseCtx.exp2(r);
+        return baseCtx.pow(l, r);
+      };
+    }
+    return base;
+  };
+
+  const makeLeftAssoc = (ops: Record<string, string>, lower: () => ASTNode) => () => {
+    let left = lower();
     while (check(t => t.t == TokenType.Operator)) {
-      switch (cur().v) {
-        case '**':
-          tokens.pop();
-          const right = unit();
-          left = (ctx: Context) => {
-            const l = left(ctx) as number;
-            const r = right(ctx) as number;
-            if (l === Math.E) return baseCtx.exp(r);
-            if (l === 2) return baseCtx.exp2(r);
-            return baseCtx.pow(l, r);
-          };
-          break;
-        default: return left;
-      }
+      const op = ops[cur().v as string];
+      if (!op) break;
+      left = make2NumOp(op, left, lower);
+    }
+    return left;
+  }
+
+  const mulExpr = makeLeftAssoc({
+    '*': 'mul',
+    '/': 'div',
+    '//': 'fdiv',
+    '%': 'mod',
+    '@': 'matmul'
+  }, powExpr);
+
+  const addExpr = makeLeftAssoc({
+    '+': 'add',
+    '-': 'sub'
+  }, mulExpr);
+
+  const shiftExpr = makeLeftAssoc({
+    '<<': 'shl',
+    '>>': 'shr'
+  }, addExpr);
+
+  const makeBitop = (op: string, name: string, lower: () => ASTNode) => () => {
+    let left = lower();
+    while (check(t => t.t == TokenType.Operator && t.v == op)) {
+      const oldleft = left;
+      tokens.pop();
+      const right = lower();
+      left = (ctx: Context) => {
+        const lhs = oldleft(ctx);
+        const rhs = right(ctx);
+        let opn = name;
+        if ((broadcast(lhs)[0]['t'].t & broadcast(rhs)[0]['t'].t) != DataType.Bool) opn = 'bit' + name;
+        return baseCtx[opn](lhs, rhs);
+      };
     }
     return left;
   };
 
-  const mulExpr = () => {
-    let left = powExpr();
+  const bandExpr = makeBitop('&', 'and', shiftExpr);
+  const bxorExpr = makeBitop('^', 'xor', bandExpr);
+  const borExpr = makeBitop('|', 'or', bxorExpr);
+
+  const relExpr = makeLeftAssoc({
+    '<': 'lt',
+    '<=': 'lte',
+    '>': 'gt',
+    '>=': 'gte'
+  }, borExpr);
+
+  const cmpExpr = makeLeftAssoc({
+    '==': 'eq',
+    '!=': 'ne'
+  }, relExpr);
+
+  const boolExpr = () => {
+    let left = cmpExpr();
     while (check(t => t.t == TokenType.Operator)) {
-      switch (cur().v) {
-        case '*':
-          left = make2NumOp('mul', left, powExpr);
-          break;
-        case '/':
-          left = make2NumOp('div', left, powExpr);
-          break;
-        case '%':
-          left = make2NumOp('mod', left, powExpr);
-          break;
-        case '@':
-          left = make2NumOp('matmul', left, powExpr);
-          break;
-        default: return left;
-      }
+      const oldleft = cond(left);
+      if (cur().v == '&&') {
+        tokens.pop();
+        const right = cmpExpr();
+        left = (ctx: Context) => {
+          const lhs = oldleft(ctx);
+          if (!lhs) return lhs;
+          return right(ctx);
+        };
+      } else if (cur().v == '||') {
+        tokens.pop();
+        const right = cmpExpr();
+        left = (ctx: Context) => {
+          const lhs = oldleft(ctx);
+          if (lhs) return lhs;
+          return right(ctx);
+        };
+      } else break;
     }
     return left;
-  };
-
-  const addExpr = () => {
-    let left = mulExpr();
-    while (check(t => t.t == TokenType.Operator)) {
-      switch (cur().v) {
-        case '+':
-          left = make2NumOp('add', left, mulExpr);
-          break;
-        case '-':
-          left = make2NumOp('sub', left, mulExpr);
-          break;
-        default: return left;
-      }
-    }
-    return left;
-  };
-
-  const relExpr = () => {
-    // TODO: relational operators
-    return addExpr();
-  };
+  }
 
   const expr = () => {
     // TODO: more stuff?
-    return relExpr();
+    return boolExpr();
   };
 
   const stmt = () => {
@@ -480,7 +597,7 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
         continue;
       } else if (check(t => t.t == TokenType.Keyword && t.v == 'while')) {
         tokens.pop();
-        const cond = expr();
+        const condition = cond(expr());
         expect(t => t.t == TokenType.Bracket && t.v == '{');
         tokens.pop();
         const body = stmt();
@@ -488,29 +605,76 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
         tokens.pop();
         result = (ctx: Context) => {
           oldresult(ctx);
-          while (cond(ctx)) {
+          while (condition(ctx)) {
             body(ctx);
           }
         };
         continue;
       } else if (check(t => t.t == TokenType.Keyword && t.v == 'if')) {
-        tokens.pop();
-        const cond = expr();
-        expect(t => t.t == TokenType.Bracket && t.v == '{');
-        tokens.pop();
-        const body = stmt();
-        expect(t => t.t == TokenType.Bracket && t.v == '}');
-        tokens.pop();
+        const parseIf = () => {
+          tokens.pop();
+          const condition = cond(expr());
+          expect(t => t.t == TokenType.Bracket && t.v == '{');
+          tokens.pop();
+          const body = stmt();
+          expect(t => t.t == TokenType.Bracket && t.v == '}');
+          tokens.pop();
+          let elseBody: ASTNode = () => {};
+          if (check(t => t.t == TokenType.Keyword && t.v == 'else')) {
+            tokens.pop();
+            if (check(t => t.t == TokenType.Keyword && t.v == 'if')) {
+              elseBody = parseIf();
+            } else {
+              expect(t => t.t == TokenType.Bracket && t.v == '{');
+              tokens.pop();
+              elseBody = stmt();
+              expect(t => t.t == TokenType.Bracket && t.v == '}');
+              tokens.pop();
+            }
+          }
+          return (ctx: Context) => {
+            if (condition(ctx)) {
+              body(ctx);
+            } else {
+              elseBody(ctx);
+            }
+          };
+        }
+        const ext = parseIf();
         result = (ctx: Context) => {
           oldresult(ctx);
-          if (cond(ctx)) {
-            body(ctx);
-          }
-        };
+          ext(ctx);
+        }
         continue;
       } else if (check(t => t.t == TokenType.Identifier || t.t == TokenType.Value)) {
         let prevTokens = tokens.slice();
         const token = tokens.pop();
+        const handleMod = (ctx: Context, op: string, a: unknown, mb: (ctx: Context) => unknown, run: (val: unknown) => unknown) => {
+          if (op == 'and') {
+            if (condVal(a)) {
+              let val = mb(ctx);
+              if (a && a[ndvInternals]) (a as NDView).set(val);
+              else run(val);
+            }
+          } else if (op == 'or') {
+            if (!condVal(a)) {
+              let val = mb(ctx);
+              if (a && a[ndvInternals]) (a as NDView).set(val);
+              else run(val);
+            }
+          } else {
+            const b = mb(ctx);
+            if (
+              (op == 'bitand' || op == 'bitor' || op == 'bitxor') &&
+              (broadcast(a)[0]['t'].t & broadcast(b)[0]['t'].t) == DataType.Bool
+            ) op = op.slice(3);
+            if (a && a[ndvInternals]) {
+              baseCtx[op](a, b, { out: a });
+            } else {
+              run(baseCtx[op](a, b));
+            }
+          } 
+        }
         let tgt = {
           g: (ctx: Context) => {
             if (token.t == TokenType.Identifier) return ctx.e[token.v];
@@ -530,25 +694,21 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
             if (token.t == TokenType.Value &&
               (!token.v || (token.v[symbolic] == null && !token.v[ndvInternals]))
             ) {
-              throw new SyntaxError('cannot modifys non-symbolic value');
+              throw new SyntaxError('cannot modify non-symbolic, non-ndarray value');
             }
             return (ctx: Context) => {
               if (token.t == TokenType.Identifier) {
-                let a = ctx.e[token.v];
-                if (a && a[ndvInternals]) {
-                  baseCtx[op](a, b(ctx), { out: a });
-                } else {
-                  ctx.e[token.v] = baseCtx[op](a, b(ctx));
-                }
-              } else if (token.v[symbolic]) {
-                let a = ctx.i[token.v[symbolic]];
-                if (a && a[ndvInternals]) {
-                  baseCtx[op](a, b(ctx), { out: a });
-                } else {
-                  ctx.i[token.v[symbolic]] = baseCtx[op](a, b(ctx));
-                }
+                handleMod(ctx, op, ctx.e[token.v], b, val => {
+                  ctx.e[token.v] = val;
+                });
+              } else if (token.v[symbolic] != null) {
+                handleMod(ctx, op, ctx.i[token.v[symbolic]], b, val => {
+                  ctx.i[token.v[symbolic]] = val;
+                });
               } else {
-                baseCtx[op](token.v, b(ctx), { out: token.v });
+                handleMod(ctx, op, token.v, b, () => {
+                  throw new Error('unreachable');
+                });
               }
             }
           }
@@ -559,26 +719,8 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
         )) {
           const bracket = tokens.pop();
           if (bracket.v == '(') {
-            // function call
-            const token = expect();
-            let call: ASTNode;
-            if (token && token.t == TokenType.Bracket && token.v == ')') {
-              tokens.pop();
-              call = tryCall(tgt.g, []);
-            } else {
-              const args: ASTNode[] = [expr()];
-              while (expect().t != TokenType.Bracket || cur().v != ')') {
-                const sep = tokens.pop();
-                if (sep.t != TokenType.Separator || sep.v != ',') {
-                  throw new SyntaxError(`expected comma in argument list, got ${tokenTypes[sep.t]} ${sep.v}`);
-                }
-                args.push(expr());
-              }
-              tokens.pop();
-              call = tryCall(tgt.g, args);
-            }
             tgt = {
-              g: call,
+              g: tryCall(tgt.g, funcArgs()),
               s: () => {
                 throw new TypeError('cannot assign to function call');
               },
@@ -587,22 +729,7 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
               }
             };
           } else if (bracket.v == '[') {
-            // slice index
-            let sliceParts: ASTNode[] = [];
-            while (expect().t != TokenType.Bracket || cur().v != ']') {
-              // hack for np.newaxis (+)
-              while (
-                (expect().t == TokenType.Separator && cur().v != ';') ||
-                (cur().t == TokenType.Operator && (cur().v == '+' || cur().v == '...'))
-              ) {
-                const elem = tokens.pop();
-                sliceParts.push(() => elem.v);
-              }
-              if (expect().t == TokenType.Bracket && cur().v == ']') break;
-              sliceParts.push(expr());
-            }
-            tokens.pop();
-            const makeSlice = (ctx: Context) => sliceParts.map(p => p(ctx)).join('');
+            const makeSlice = slice();
             const oldt = tgt;
             tgt = {
               g: (ctx: Context) => oldt.g(ctx)[makeSlice(ctx)],
@@ -613,11 +740,9 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
                 const base = oldt.g(ctx);
                 const slice = makeSlice(ctx);
                 const tgt = base[slice];
-                if (tgt && tgt[ndvInternals]) {
-                  baseCtx[op](tgt, b(ctx), { out: tgt });
-                } else {
-                  base[slice] = baseCtx[op](tgt, b(ctx));
-                }
+                handleMod(ctx, op, tgt, b, val => {
+                  base[slice] = val;
+                });
               }
             };
           } else {
@@ -638,11 +763,9 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
               m: (op: string, b: ASTNode) => (ctx: Context) => {
                 const base = oldt.g(ctx);
                 const tgt = base[ident];
-                if (tgt && tgt[ndvInternals]) {
-                  baseCtx[op](tgt, b(ctx), { out: tgt });
-                } else {
-                  base[ident] = baseCtx[op](tgt, b(ctx));
-                }
+                handleMod(ctx, op, tgt, b, val => {
+                  base[ident] = val;
+                });
               }
             };
           }
@@ -720,5 +843,10 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
  * ```
  */
 export function evaluate(code: readonly string[], ...args: unknown[]): unknown {
+  for (const arg of args) {
+    if (arg && arg[symbolic] != null) {
+      throw new TypeError('cannot evaluate expression with arguments');
+    }
+  }
   return parse(code, ...args)();
 }

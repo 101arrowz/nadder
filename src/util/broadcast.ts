@@ -7,7 +7,6 @@ export type Broadcastable<T extends DataType> = NDView<T> | RecursiveArray<Index
 type Broadcast<T extends DataType[]> = { [I in keyof T]: NDView<T[I]> };
 
 export function broadcast<T extends DataType[]>(...views: { [I in keyof T]: Broadcastable<T[I]> }) {
-  if (views.length < 2) return views as Broadcast<T>;
   let maxDims = 0;
   const allInfo = views.map(v => {
     if (!v || !v[ndvInternals]) v = array(v);
@@ -18,6 +17,7 @@ export function broadcast<T extends DataType[]>(...views: { [I in keyof T]: Broa
       s: v['s'].slice().reverse() as number[]
     };
   });
+  if (views.length < 2) return allInfo.map(a => a.v);
   for (let i = 0; i < maxDims; ++i) {
     const target = allInfo.find(v => i < v.d.length && v.d[i] != 1) || allInfo.find(v => i < v.d.length);
     for (const info of allInfo) {
