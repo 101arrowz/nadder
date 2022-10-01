@@ -175,7 +175,7 @@ export function arange<T extends NumericType | BigNumericType>(stopOrStart?: num
 /**
  * Options for `zeros`
  */
- export interface ZerosOpts<T extends DataType> {
+export interface ZerosOpts<T extends DataType> {
   /**
    * The datatype to use for the output
    */
@@ -196,7 +196,7 @@ export function zeros<D extends Dims, T extends NumericType | BigNumericType = D
 /**
  * Options for `ones`
  */
- export interface OnesOpts<T extends DataType> {
+export interface OnesOpts<T extends DataType> {
   /**
    * The datatype to use for the output
    */
@@ -209,7 +209,7 @@ export function zeros<D extends Dims, T extends NumericType | BigNumericType = D
  * @param opts Additional options for array creation
  * @returns A ndarray full of ones with the given shape
  */
- export function ones<D extends Dims, T extends NumericType | BigNumericType = DataType.Int32>(shape: D, opts?: OnesOpts<T>): NDView<T, D> {
+export function ones<D extends Dims, T extends NumericType | BigNumericType = DataType.Int32>(shape: D, opts?: OnesOpts<T>): NDView<T, D> {
   const arr = ndarray((opts && opts.dtype || DataType.Int32) as T, shape);
   arr.set(
     arr.dtype == DataType.Int64 || arr.dtype == DataType.Uint64 ? BigInt(1) : 1

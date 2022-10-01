@@ -17,7 +17,7 @@ export function broadcast<T extends DataType[]>(...views: { [I in keyof T]: Broa
       s: v['s'].slice().reverse() as number[]
     };
   });
-  if (views.length < 2) return allInfo.map(a => a.v);
+  if (views.length < 2) return allInfo.map(a => a.v[ndvInternals]);
   for (let i = 0; i < maxDims; ++i) {
     const target = allInfo.find(v => i < v.d.length && v.d[i] != 1) || allInfo.find(v => i < v.d.length);
     for (const info of allInfo) {

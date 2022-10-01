@@ -1,7 +1,7 @@
 import { Dims, NDView } from '../../core/ndarray';
 import { DataType, dataTypeNames, IndexType } from '../../core/datatype';
-import { broadcast } from '../broadcast';
-import { makeOut, ndvInternals, UnionToIntersection } from '../internal';
+import { broadcast, Broadcastable } from '../broadcast';
+import { fixInd, makeOut, ndvInternals, UnionToIntersection } from '../internal';
 import { ndarray, RecursiveArray } from '../helpers';
 
 type MultiType = readonly DataType[];
@@ -13,24 +13,98 @@ type OpImpl<T extends MultiTypeArgs, TR extends MultiType> = readonly [args: T, 
 
 type UfuncReturnType<T extends MultiType, TF extends DataType, D extends Dims> = '1' extends keyof T ? [...({ [K in keyof T]: NDView<DataType extends TF ? T[K] : TF, D> })] : NDView<DataType extends TF ? T[0] : TF, D>;
 
-type UfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> = {
+type BaseUfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> = {
+  /**
+   * The array(s) into which to write the output of the ufunc
+   */
   out?: UfuncReturnType<TR, TF, D>;
-  where?: NDView<DataType.Bool, D> | boolean;
+  
+  /**
+   * The datatype to use for the output
+   */
   dtype?: TF;
-} | UfuncReturnType<TR, TF, D>;
-type UfuncArgs<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =  [...args: ({ [I in keyof T]: NDView<T[I][number], D> | RecursiveArray<IndexType<T[I][number]>> }), opts: UfuncOpts<T, TR, TF, D> | void];
-type UfuncSig<T> = T extends OpImpl<infer T, infer TR> ? (<D extends Dims, TF extends DataType>(...args: UfuncArgs<T, TR, TF, D>) => UfuncReturnType<TR, TF, D>) : never;
-type Ufuncify<Tuple extends readonly unknown[]> = UnionToIntersection<{ [Index in keyof Tuple]: UfuncSig<Tuple[Index]> }[number]>;
+};
+
+type LocatableUfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =
+  & BaseUfuncOpts<T, TR, TF, D>
+  & {
+    /**
+     * A mask for the array that decides where the ufunc should be applied
+     */
+    where?: Broadcastable<DataType.Bool>;
+  };
+
+type ReduceUfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =
+  & LocatableUfuncOpts<T, TR, TF, D>
+  & {
+    /**
+     * The axis or axes over which to reduce
+     */
+    axis?: number | number[];
+
+    /**
+     * Whether or not to preserve 1-length dimensions for reduced axes
+     */
+    keepdims?: boolean;
+    
+    /**
+     * The initial value for the reduction
+     */
+    initial?: IndexType<DataType extends TF ? TR[0] : TF>
+  };
+
+type AccumulateUfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =
+  & BaseUfuncOpts<T, TR, TF, D>
+  & {
+     /**
+     * The axis over which to accumulate
+     */
+      axis?: number;
+  };
+
+type UfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =
+  | LocatableUfuncOpts<T, TR, TF, D>
+  | UfuncReturnType<TR, TF, D>;
+type UfuncArgs<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> = [...args: ({ [I in keyof T]: NDView<T[I][number], D> | RecursiveArray<IndexType<T[I][number]>> }), opts: UfuncOpts<T, TR, TF, D> | void];
+type UfuncSig<T> = T extends OpImpl<infer T, infer TR> ? (<D extends Dims, TF extends DataType>(...args: UfuncArgs<T, TR, TF, D>) => UfuncReturnType<TR, TF, D>) & ('1' extends keyof T ? '1' extends keyof TR ? unknown : {
+  /**
+   * Reduces an array with this operation across the supplied dimension(s)
+   * @param target The ndarray to reduce
+   * @param opts Options for the reduction
+   */
+  reduce<TF extends DataType>(target: Broadcastable<T[number][number]>, opts?: ReduceUfuncOpts<T, TR, TF, Dims>): UfuncReturnType<TR, TF, Dims>;
+  
+  /**
+   * Accumulates the entries of an array with this operation across the supplied dimension
+   * @param target The ndarray to accumulate
+   * @param opts Options for the accumulation
+   */
+  accumulate<D extends Dims, TF extends DataType>(target: NDView<T[number][number], D> | RecursiveArray<IndexType<T[number][number]>>, opts?: AccumulateUfuncOpts<T, TR, TF, D>): UfuncReturnType<TR, TF, D>;
+} : unknown) : never;
+type Ufuncify<Tuple extends readonly unknown[], I> = UnionToIntersection<{ [Index in keyof Tuple]: UfuncSig<Tuple[Index]> }[number]> & (I extends never ? unknown : {
+  identity: I
+});
 
 export const opImpl = <T extends MultiTypeArgs, TR extends MultiType>(args: T, result: TR, impl: (...args: OpArgs<T>) => OpReturnType<TR>): OpImpl<T, TR> =>
   [args, result, impl];
 
 // TODO: fix case of adding scalars in types
 
-export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(name: string, nin: number, nout: number, ...impls: T): Ufuncify<T> => {
+export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[], I>(name: string, nin: number, nout: number, identity: I, ...impls: T): Ufuncify<T, I> => {
   const fastImpls = impls.map(([args, result, impl]) => [args.map(types => types.reduce((a, b) => a | b, 0)), result, impl] as const);
+  const chooseImpl = (inputs: NDView[], dtype: DataType) => {
+    const possibleImpls = fastImpls.filter(([ins]) => ins.every((mask, i) => mask & inputs[i]['t'].t));
+    if (!possibleImpls.length) throw new TypeError(`${name} is not implemented for the given arguments`);
+    const chosenImpl = dtype
+      ? possibleImpls.find(([_, outs]) => outs.every(t => t == dtype)) || possibleImpls[0]
+      : (dtype = possibleImpls[0][1][0], possibleImpls[0]);
+    return {
+      i: chosenImpl,
+      d: dtype
+    };
+  }
   // assertion: nin > 0, nout > 0, impls.every(([args, result, impl]) => args.length == nin && result.length == nout)
-  return ((...args: UfuncArgs<MultiTypeArgs, MultiType, DataType, Dims>) => {
+  const fn = ((...args: UfuncArgs<MultiTypeArgs, MultiType, DataType, Dims>) => {
     if (args.length > nin + 1 || args.length < nin) throw new TypeError(`${name} takes ${nin} arguments and optional arguments; got ${args.length} arguments`);
     let opts = (args.length > nin && args.pop() || {}) as UfuncOpts<MultiTypeArgs, MultiType, DataType, Dims>;
     if (nout > 1 ? Array.isArray(opts) && opts.every(o => o && o[ndvInternals]) : opts[ndvInternals]) {
@@ -39,12 +113,9 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
     let { where = true, out, dtype } = opts;
     const [ndWhere, ...inputs] = broadcast(where, ...(args as NDView[]));
     if (ndWhere['t'].t != DataType.Bool) throw new TypeError(`${name} expects where to be a boolean ndarray`);
-    const possibleImpls = fastImpls.filter(([ins]) => ins.every((mask, i) => mask & inputs[i]['t'].t));
-    if (!possibleImpls.length) throw new TypeError(`${name} is not implemented for the given arguments`);
-    const chosenImpl = dtype
-      ? possibleImpls.find(([_, outs]) => outs.every(t => t == dtype)) || possibleImpls[0]
-      : (dtype = possibleImpls[0][1][0], possibleImpls[0]);
-    const [ins, outs, impl] = chosenImpl;
+    const choice = chooseImpl(inputs, dtype);
+    dtype = choice.d;
+    const [ins, outs, impl] = choice.i;
     const dims = inputs[0]['d'];
     if (nout > 1) {
       if (out) {
@@ -253,5 +324,215 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[]>(nam
       }
       return dims.length ? out : out['t'].b[out['o']];
     }
-  }) as Ufuncify<T>;
+  })
+  Object.defineProperty(fn, 'reduce', {
+    value: (in0: NDView, opts: ReduceUfuncOpts<MultiTypeArgs, MultiType, DataType, Dims>) => {
+      if (nin != 2 || nout != 1) {
+        throw new TypeError('can only reduce over binary functions');
+      }
+      let { where = true, out, dtype, axis = 0, keepdims, initial = identity } = opts || {};
+      const [ndWhere, target] = broadcast(where, in0);
+      if (ndWhere['t'].t != DataType.Bool) throw new TypeError(`${name} expects where to be a boolean ndarray`);
+      const axes = axis == null
+        ? target['d'].map((_, i) => i)
+        : (Array.isArray(axis)
+          ? axis
+          : [axis]).map(v => fixInd(v, target.ndim));
+      if ((new Set(axes)).size != axes.length) {
+        throw new TypeError('duplicate axes for reduce');
+      }
+      if (identity == null && axes.length != 1) {
+        throw new TypeError(`${name} undefined over multiple axes`);
+      }
+      axes.sort((a, b) => b - a);
+      if (!dtype) {
+        dtype = out && out[ndvInternals] && out.dtype || target.dtype;
+      }
+      const outDims = keepdims
+        ? target['d'].map((d, i) => axes.includes(i) ? 1 : d)
+        : target['d'].filter((_, i) => !axes.includes(i))
+      out = makeOut(name, outDims, dtype, out);
+      const assign = out[ndvInternals];
+      const endShape = target['d'].slice(axes[0] + 1);
+      const endWhere = new NDView(
+        ndWhere['t'],
+        endShape,
+        ndWhere['s'].slice(axes[0] + 1),
+        0
+      );
+      const wv = endWhere[ndvInternals];
+      const endIn = new NDView(
+        target['t'],
+        endShape,
+        target['s'].slice(axes[0] + 1),
+        0
+      );
+      const iv = endIn[ndvInternals];
+      const endOut = new NDView(
+        assign['t'],
+        endShape,
+        assign['s'].slice(axes[0] - axes.length + 1),
+        0
+      );
+      const ov = endOut[ndvInternals];
+      if (initial == null) {
+        if (!target.size) {
+          throw new TypeError(`cannot reduce with ${name} over zero-size array without initial value`);
+        }
+        const axis = axes[0];
+        const red = (dim: number, ind: number, outInd: number, whereInd: number) => {
+          if (dim == axis) {
+            ov['o'] = outInd;
+            iv['o'] = ind;
+            wv['o'] = whereInd;
+            endOut.copy(endIn);
+            for (let i = 1; i < target['d'][dim]; ++i) {
+              iv['o'] += target['s'][dim];
+              wv['o'] += ndWhere['s'][dim];
+              (fn as (...args: unknown[]) => {})(
+                endOut,
+                endIn,
+                { where: where === true || endWhere, out: endOut }
+              );
+            }
+          } else {
+            for (let i = 0; i < target['d'][dim]; ++i) {
+              red(dim + 1, ind, outInd, whereInd);
+              ind += target['s'][dim];
+              outInd += assign['s'][dim];
+              whereInd += ndWhere['s'][dim];
+            }
+          }
+        }
+        red(0, target['o'], assign['o'], ndWhere['o']);
+      } else {
+        out.set(initial);
+        const redWhere = (dim: number, sub: number, ind: number, outInd: number, whereInd: number) => {
+          if (axes.includes(dim)) {
+            if (dim == axes[0]) {
+              ov['o'] = outInd;
+              iv['o'] = ind;
+              wv['o'] = whereInd;
+              for (let i = 0; i < target['d'][dim]; ++i) {
+                (fn as (...args: unknown[]) => {})(
+                  endOut,
+                  endIn,
+                  { where: endWhere, out: endOut }
+                );
+                iv['o'] += target['s'][dim];
+                wv['o'] += ndWhere['s'][dim];
+              }
+            } else {
+              for (let i = 0; i < target['d'][dim]; ++i) {
+                redWhere(dim + 1, sub + 1, ind, outInd, whereInd);
+                ind += target['s'][dim];
+                whereInd += ndWhere['s'][dim];
+              }
+            }
+          } else {
+            for (let i = 0; i < target['d'][dim]; ++i) {
+              redWhere(dim + 1, sub, ind, outInd, whereInd);
+              ind += target['s'][dim];
+              outInd += assign['s'][dim - sub];
+              whereInd += ndWhere['s'][dim];
+            }
+          }
+        }
+        const red = (dim: number, sub: number, ind: number, outInd: number) => {
+          if (axes.includes(dim)) {
+            if (dim == axes[0]) {
+              ov['o'] = outInd;
+              iv['o'] = ind;
+              for (let i = 0; i < target['d'][dim]; ++i) {
+                (fn as (...args: unknown[]) => {})(
+                  endOut,
+                  endIn,
+                  { out: endOut }
+                );
+                iv['o'] += target['s'][dim];
+              }
+            } else {
+              for (let i = 0; i < target['d'][dim]; ++i) {
+                red(dim + 1, sub + 1, ind, outInd);
+                ind += target['s'][dim];
+              }
+            }
+          } else {
+            for (let i = 0; i < target['d'][dim]; ++i) {
+              red(dim + 1, sub, ind, outInd);
+              ind += target['s'][dim];
+              outInd += assign['s'][dim - sub];
+            }
+          }
+        }
+        (where === true ? red : redWhere)(0, 0, target['o'], assign['o'], ndWhere['o']);
+      }
+      return outDims.length ? out : assign['t'].b[assign['o']];
+    }
+  });
+  Object.defineProperty(fn, 'accumulate', {
+    value: (in0: NDView, opts: AccumulateUfuncOpts<MultiTypeArgs, MultiType, DataType, Dims>) => {
+      if (nin != 2 || nout != 1) {
+        throw new TypeError('can only reduce over binary functions');
+      }
+      const [target] = broadcast(in0);
+      let { out, dtype, axis = 0 } = opts || {};
+      axis = fixInd(axis, target.ndim);
+      if (!dtype) {
+        dtype = out && out[ndvInternals] && out.dtype || target.dtype;
+      }
+      const dims = target.shape;
+      out = makeOut(name, dims, dtype, out);
+      if (!out.size) return out;
+      const assign = out[ndvInternals];
+      const endShape = target['d'].slice(axis + 1);
+      const endIn = new NDView(
+        target['t'],
+        endShape,
+        target['s'].slice(axis + 1),
+        0
+      );
+      const iv = endIn[ndvInternals];
+      const endOut = new NDView(
+        assign['t'],
+        endShape,
+        assign['s'].slice(axis + 1),
+        0
+      );
+      const ov = endOut[ndvInternals];
+      const endPrevOut = new NDView(
+        assign['t'],
+        endShape,
+        assign['s'].slice(axis + 1),
+        0
+      );
+      const pv = endPrevOut[ndvInternals];
+      const acc = (dim: number, ind: number, outInd: number) => {
+        if (dim == axis) {
+          ov['o'] = pv['o'] = outInd;
+          iv['o'] = ind;
+          endPrevOut.copy(endIn);
+          for (let i = 1; i < target['d'][dim]; ++i) {
+            iv['o'] += target['s'][dim];
+            pv['o'] = ov['o'];
+            ov['o'] += assign['s'][dim];
+            (fn as (...args: unknown[]) => {})(
+              endPrevOut,
+              endIn,
+              { out: endOut }
+            );
+          }
+        } else {
+          for (let i = 0; i < target['d'][dim]; ++i) {
+            acc(dim + 1, ind, outInd);
+            ind += target['s'][dim];
+            outInd += assign['s'][dim];
+          }
+        }
+      }
+      acc(0, target['o'], assign['o']);
+      return out;
+    }
+  });
+  return fn as Ufuncify<T, I>;
 }

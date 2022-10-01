@@ -9,12 +9,6 @@ export interface Complex {
 };
 
 export function wrap(obj: Complex) {
-  Object.defineProperty(obj, Symbol.toPrimitive, {
-    value: function(hint: 'string' | 'number') {
-      if (hint == 'number') return Math.hypot(this.real, this.imag);
-      return this.toString();
-    }
-  });
   Object.defineProperty(obj, Symbol.for('nodejs.util.inspect.custom'), {
     value: function() {
       return this.toString();

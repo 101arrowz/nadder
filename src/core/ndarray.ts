@@ -3,17 +3,10 @@ import {
 } from './datatype';
 import { FlatArray } from './flatarray';
 import {
-  Bitset, ComplexArray, ndvInternals, broadcast, Broadcastable, ndarray, RecursiveArray
+  Bitset, ComplexArray, ndvInternals, broadcast, Broadcastable, ndarray, RecursiveArray, fixInd
 } from '../util';
 
 export type Dims = readonly number[];
-
-const fixInd = (ind: number, size: number, loose?: 1) => {
-  if (!Number.isInteger(ind) || (!loose && (ind < -size || ind >= size))) {
-    throw new RangeError(`index ${ind} out of bounds in dimension of length ${size}`);
-  }
-  return ind < 0 ? ind + size : ind;
-}
 
 type NDViewChild<T extends DataType, D extends Dims> =
   D extends readonly []
@@ -315,7 +308,7 @@ export class NDView<T extends DataType, D extends Dims> {
   set(value: Broadcastable<AssignableType<T>>) {
     const [target, val] = broadcast(this, value);
     if (!isAssignable(target.t.t, val.t.t)) {
-      throw new TypeError(`cannot assign to ndarray of type ${dataTypeNames[val.t.t]} to ${dataTypeNames[target.t.t]}`);
+      throw new TypeError(`cannot assign to ndarray of type ${dataTypeNames[val.t.t]} to ${dataTypeNames[target.t.t]}; for unsafe conversion, use copy()`);
     }
     if (target.d.filter(v => v != 1).length != target.ndim) {
       const shape = (a: unknown): number[] => Array.isArray(a) ? [a.length, ...shape(a[0])]  : [];
@@ -636,34 +629,39 @@ export class NDView<T extends DataType, D extends Dims> {
   }
 
   /**
+   * Copies the contents of an ndarray of a different datatype into this one, even if the types are not directly assignable.
+   * Prefer set() whenever possible (i.e. the types are guaranteed to be assignable).
+   * @param from The array to copy from
+   */
+  copy(from: Broadcastable<DataType>) {
+    const [target, val] = broadcast(this, from);
+    const cast = target.t.t == DataType.Int64 || target.t.t == DataType.Uint64
+      ? (v: unknown) => BigInt(+v)
+      : target.t.t <= DataType.Float64
+        ? (v: unknown) => Number(v)
+        : (v: unknown) => v;
+    const set = (dim: number, ti: number, oi: number) => {
+      if (dim == target.d.length) {
+        target.t.b[oi] = cast(val.t.b[ti]);
+      } else {
+        for (let i = 0; i < target.d[dim]; ++i) {
+          set(dim + 1, ti, oi);
+          ti += val.s[dim];
+          oi += target.s[dim];
+        }
+      }
+    }
+    set(0, val.o, target.o);
+  }
+
+  /**
    * Copies an ndarray as a new datatype, even if the types are not directly assignable
    * @param dtype The datatype to cast to
    * @returns A new array with the given datatype
    */
   astype<NT extends DataType>(dtype: NT): NDView<NT, D> {
-    const target = this[ndvInternals];
-    const result = ndarray(dtype, target.d);
-    if (isAssignable(dtype, target.t.t)) result.set(this);
-    else {
-      const out = result[ndvInternals];
-      const cast = dtype == DataType.Int64 || dtype == DataType.Uint64
-        ? (v: unknown) => BigInt(+v)
-        : dtype <= DataType.Float64
-          ? (v: unknown) => Number(v)
-          : (v: unknown) => v;
-      const set = (dim: number, ti: number, oi: number) => {
-        if (dim == out.d.length) {
-          out.t.b[oi] = cast(target.t.b[ti]);
-        } else {
-          for (let i = 0; i < out.d[dim]; ++i) {
-            set(dim + 1, ti, oi);
-            ti += target.s[dim];
-            oi += out.s[dim];
-          }
-        }
-      }
-      set(0, target.o, out.o);
-    }
+    const result = ndarray(dtype, this.d);
+    result.copy(this);
     return result;
   }
 
