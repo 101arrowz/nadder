@@ -13,7 +13,7 @@ type OpImpl<T extends MultiTypeArgs, TR extends MultiType> = readonly [args: T, 
 
 type UfuncReturnType<T extends MultiType, TF extends DataType, D extends Dims> = '1' extends keyof T ? [...({ [K in keyof T]: NDView<DataType extends TF ? T[K] : TF, D> })] : NDView<DataType extends TF ? T[0] : TF, D>;
 
-type BaseUfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> = {
+interface BaseUfuncOpts<TR extends MultiType, TF extends DataType, D extends Dims> {
   /**
    * The array(s) into which to write the output of the ufunc
    */
@@ -25,46 +25,51 @@ type BaseUfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends Dat
   dtype?: TF;
 };
 
-type LocatableUfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =
-  & BaseUfuncOpts<T, TR, TF, D>
-  & {
-    /**
-     * A mask for the array that decides where the ufunc should be applied
-     */
-    where?: Broadcastable<DataType.Bool>;
-  };
+interface LocatableUfuncOpts<TR extends MultiType, TF extends DataType, D extends Dims> extends BaseUfuncOpts<TR, TF, D> {
+  /**
+   * A mask for the array that decides where the ufunc should be applied
+   */
+  where?: Broadcastable<DataType.Bool>;
+};
 
-type ReduceUfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =
-  & LocatableUfuncOpts<T, TR, TF, D>
-  & {
-    /**
-     * The axis or axes over which to reduce
-     */
-    axis?: number | number[];
 
-    /**
-     * Whether or not to preserve 1-length dimensions for reduced axes
-     */
-    keepdims?: boolean;
-    
-    /**
-     * The initial value for the reduction
-     */
-    initial?: IndexType<DataType extends TF ? TR[0] : TF>
-  };
+/**
+ * Options for `ufunc.reduce()`
+ */
+export interface ReduceUfuncOpts<TR extends DataType, TF extends DataType> extends LocatableUfuncOpts<[TR], TF, Dims> {
+  /**
+   * The axis or axes over which to reduce
+   */
+  axis?: number | number[];
 
-type AccumulateUfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =
-  & BaseUfuncOpts<T, TR, TF, D>
-  & {
-     /**
-     * The axis over which to accumulate
-     */
-      axis?: number;
-  };
+  /**
+   * Whether or not to preserve 1-length dimensions for reduced axes
+   */
+  keepdims?: boolean;
+  
+  /**
+   * The initial value for the reduction
+   */
+  initial?: IndexType<DataType extends TF ? TR : TF>
+};
 
-type UfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =
-  | LocatableUfuncOpts<T, TR, TF, D>
+/**
+ * Options for `ufunc.accumulate()`
+ */
+export interface AccumulateUfuncOpts<TR extends DataType, TF extends DataType, D extends Dims> extends BaseUfuncOpts<[TR], TF, D> {
+  /**
+   * The axis over which to accumulate
+   */
+  axis?: number;
+};
+
+/**
+ * Options for calling ufuncs
+ */
+export type UfuncOpts<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> =
+  | LocatableUfuncOpts<TR, TF, D>
   | UfuncReturnType<TR, TF, D>;
+
 type UfuncArgs<T extends MultiTypeArgs, TR extends MultiType, TF extends DataType, D extends Dims> = [...args: ({ [I in keyof T]: NDView<T[I][number], D> | RecursiveArray<IndexType<T[I][number]>> }), opts: UfuncOpts<T, TR, TF, D> | void];
 type UfuncSig<T> = T extends OpImpl<infer T, infer TR> ? (<D extends Dims, TF extends DataType>(...args: UfuncArgs<T, TR, TF, D>) => UfuncReturnType<TR, TF, D>) & ('1' extends keyof T ? '1' extends keyof TR ? unknown : {
   /**
@@ -72,14 +77,14 @@ type UfuncSig<T> = T extends OpImpl<infer T, infer TR> ? (<D extends Dims, TF ex
    * @param target The ndarray to reduce
    * @param opts Options for the reduction
    */
-  reduce<TF extends DataType>(target: Broadcastable<T[number][number]>, opts?: ReduceUfuncOpts<T, TR, TF, Dims>): UfuncReturnType<TR, TF, Dims>;
+  reduce<TF extends DataType>(target: Broadcastable<T[number][number]>, opts?: ReduceUfuncOpts<TR[0], TF>): UfuncReturnType<TR, TF, Dims>;
   
   /**
    * Accumulates the entries of an array with this operation across the supplied dimension
    * @param target The ndarray to accumulate
    * @param opts Options for the accumulation
    */
-  accumulate<D extends Dims, TF extends DataType>(target: NDView<T[number][number], D> | RecursiveArray<IndexType<T[number][number]>>, opts?: AccumulateUfuncOpts<T, TR, TF, D>): UfuncReturnType<TR, TF, D>;
+  accumulate<D extends Dims, TF extends DataType>(target: NDView<T[number][number], D> | RecursiveArray<IndexType<T[number][number]>>, opts?: AccumulateUfuncOpts<TR[0], TF, D>): UfuncReturnType<TR, TF, D>;
 } : unknown) : never;
 type Ufuncify<Tuple extends readonly unknown[], I> = UnionToIntersection<{ [Index in keyof Tuple]: UfuncSig<Tuple[Index]> }[number]> & (I extends never ? unknown : {
   identity: I
@@ -326,7 +331,7 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[], I>(
     }
   })
   Object.defineProperty(fn, 'reduce', {
-    value: (in0: NDView, opts: ReduceUfuncOpts<MultiTypeArgs, MultiType, DataType, Dims>) => {
+    value: (in0: NDView, opts: ReduceUfuncOpts<DataType, DataType>) => {
       if (nin != 2 || nout != 1) {
         throw new TypeError('can only reduce over binary functions');
       }
@@ -471,7 +476,7 @@ export const ufunc = <T extends readonly OpImpl<MultiTypeArgs, MultiType>[], I>(
     }
   });
   Object.defineProperty(fn, 'accumulate', {
-    value: (in0: NDView, opts: AccumulateUfuncOpts<MultiTypeArgs, MultiType, DataType, Dims>) => {
+    value: (in0: NDView, opts: AccumulateUfuncOpts<DataType, DataType, Dims>) => {
       if (nin != 2 || nout != 1) {
         throw new TypeError('can only reduce over binary functions');
       }

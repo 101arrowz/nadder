@@ -45,13 +45,52 @@ console.log(evaluate`${t}[:, 0] * 2 + 1 / ${arange(1000)}`)
 console.log(add(t, boolIndex));
 ```
 
+The embedded DSL supports a wide variety of common constructs and Python syntax (e.g. `@` matrix multiplication, `//` floor division, keyword arguments). All syntax works both on scalars and ndarrays. The DSL can also use JavaScript values interpolated within the code.
+
+```js
+import { parse, argument, arange } from 'nadder';
+
+const calcTrace = parse`
+  mat = ${argument('matrix')}.astype(float64);
+  n = mat.shape[0];
+  trace = 1;
+
+  if ${process.env.DEBUG} {
+    ${console.log}(mat);
+  }
+
+  for i in arange(n) {
+    trace *= mat[i, i];
+  }
+
+  # Last line with no semicolon is the return value
+  trace
+`;
+
+// 27
+const example = calcTrace({
+  matrix: array([
+    [1,4,5],
+    [2,3,6],
+    [7,1,9]
+  ])
+});
+
+// [100776., 216216., 347256., 494856., 660000.]
+const multiElem = calcTrace({
+  matrix: arange(1, 81).reshape(4, 4, 5)
+});
+```
+
 ## Features
-- Ergonomic NumPy slicing, broadcasting
-  - All NumPy bracket syntax and indexing routines supported
 - NumPy syntax and evaluation via `evaluate`
-  - Full support for most numeric operations
+  - Python-esque syntax and ndarray manipulation
+  - Support for most numeric operations
+  - Conditionals, for/while loops, JavaScript interpolation
+- Ergonomic NumPy slicing, broadcasting with or without `evaluate`
+  - All NumPy bracket syntax and indexing routines supported
 - Matrix manipulation and `matmul`
-- Tiny: 20kB minified, 8kB gzipped
+- Tiny: under 20kB gzipped
 - Performant view-based manipulation; minimal copying
 - Fast bitset-backed boolean ndarrays
 - Interleaved complex numbers
