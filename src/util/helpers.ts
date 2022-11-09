@@ -41,7 +41,10 @@ export function ndarray<T extends DataType, D extends Dims>(dataOrType: T | Data
   return new NDView<T, D>(src, dimensions, stride, 0);
 }
 
-const recurseFind = (data: RecursiveArray<unknown>): [number[], DataType] => {
+const recurseFind = (data: IntoNDView<DataType>): [readonly number[], DataType] => {
+  if (data && data[ndvInternals]) {
+    return [(data as NDView).shape, (data as NDView).dtype];
+  }
   if (Array.isArray(data)) {
     if (data.length == 0) return [[0], DataType.Any];
     const results = data.map(recurseFind);
@@ -55,54 +58,74 @@ const recurseFind = (data: RecursiveArray<unknown>): [number[], DataType] => {
 }
 
 /**
- * A recursive list interface for use with `array()`
+ * A recursive list type
  */
 export type RecursiveArray<T> = T | RecursiveArray<T>[];
+
+/**
+ * A recursive ndarray/list type for use with `array()`
+ */
+export type IntoNDView<T extends DataType, D extends Dims = Dims> = RecursiveArray<IndexType<T> | NDView<T>>[] | IndexType<T> | NDView<T, D>;
 
 /**
  * Creates an ndarray from nested Array objects
  * @param data The N-dimensional list to load data from
  * @returns An ndarray with the provided data represented in an efficient format
  */
-export function array(data: RecursiveArray<number>): NDView<DataType.Int32 | DataType.Float64>;
+export function array<T extends DataType.Int32 | DataType.Float64>(data: IntoNDView<T>): NDView<T>;
 /**
  * Creates an ndarray from nested Array objects
  * @param data The N-dimensional list to load data from
  * @returns An ndarray with the provided data represented in an efficient format
  */
-export function array(data: RecursiveArray<bigint>): NDView<DataType.Int64>;
+export function array<T extends DataType.Int64 | DataType.Uint64 = DataType.Int64>(data: IntoNDView<T>): NDView<T>;
 /**
  * Creates an ndarray from nested Array objects
  * @param data The N-dimensional list to load data from
  * @returns An ndarray with the provided data represented in an efficient format
  */
-export function array(data: RecursiveArray<string>): NDView<DataType.String>;
+export function array(data: IntoNDView<DataType.String>): NDView<DataType.String>;
 /**
  * Creates an ndarray from nested Array objects
  * @param data The N-dimensional list to load data from
  * @returns An ndarray with the provided data represented in an efficient format
  */
-export function array(data: RecursiveArray<boolean>): NDView<DataType.Bool>;
+export function array(data: IntoNDView<DataType.Bool>): NDView<DataType.Bool>;
 /**
  * Creates an ndarray from nested Array objects
  * @param data The N-dimensional list to load data from
  * @returns An ndarray with the provided data represented in an efficient format
  */
-export function array(data: RecursiveArray<Complex>): NDView<DataType.Complex>;
+export function array(data: IntoNDView<DataType.Complex>): NDView<DataType.Complex>;
 /**
  * Creates an ndarray from nested Array objects
  * @param data The N-dimensional list to load data from
  * @returns An ndarray with the provided data represented in an efficient format
  */
-export function array(data: RecursiveArray<unknown>): NDView<DataType.Any>;
-export function array(data: RecursiveArray<unknown>): NDView<DataType> {
+export function array(data: IntoNDView<DataType.Any>): NDView<DataType.Any>;
+/**
+ * Creates an ndarray from nested Array objects
+ * @param data The N-dimensional list to load data from
+ * @returns An ndarray with the provided data represented in an efficient format
+ */
+export function array<T extends DataType>(data: IntoNDView<T>): NDView<T>;
+export function array(data: IntoNDView<DataType>): NDView {
   const [dims, type] = recurseFind(data);
-  const flat = Array.isArray(data) ? data.flat(Infinity) : [data];
   // potentially optimizable
   const arr = ndarray(type, dims);
-  for (let i = 0; i < flat.length; ++i) {
-    arr['t'].b[i] = flat[i];
-  }
+  const dfs = (val: unknown, oi: number, dim: number) => {
+    if (dim == dims.length) arr['t'].b[oi] = val;
+    else if (val && val[ndvInternals]) {
+      new NDView(arr['t'], dims.slice(dim), arr['s'].slice(dim), oi)
+        .set(val);
+    } else {
+      for (let i = 0; i < dims[dim]; ++i) {
+        dfs(val[i], oi, dim + 1);
+        oi += arr['s'][dim];
+      }
+    }
+  };
+  dfs(data, arr['o'], 0);
   return arr;
 }
 

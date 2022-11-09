@@ -2,6 +2,7 @@ import { broadcast, ndvInternals } from '../../util';
 import * as ufuncOps from '../../util/ufunc/ops';
 import * as linalgOps from '../../util/linalg';
 import * as helpers from '../../util/helpers';
+import { wrap } from '../../util/types/complex';
 import { NDView } from '../ndarray';
 import { DataType, dataTypeNames } from '../datatype';
 
@@ -242,7 +243,12 @@ export function parse<T extends unknown[]>(code: readonly string[], ...args: T):
           if (num.length > 1 && code == 48) {
             throw new TypeError('leading zeros are not allowed in integer literals');
           }
-          tokens.push({ t: TokenType.Value, v: +num });
+          let v: unknown = +num;
+          if (curInput.charCodeAt(ind) == 105) {
+            ++ind;
+            v = wrap({ real: 0, imag: v as number });
+          }
+          tokens.push({ t: TokenType.Value, v });
           curInput = curInput.slice(ind);
           break;
         }
