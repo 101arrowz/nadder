@@ -3,7 +3,7 @@ import {
 } from './datatype';
 import { FlatArray } from './flatarray';
 import {
-  Bitset, ComplexArray, ndvInternals, broadcast, Broadcastable, ndarray, RecursiveArray, fixInd
+  Bitset, ComplexArray, ndvInternals, broadcast, Broadcastable, ndarray, RecursiveArray, fixInd, StringArray
 } from '../util';
 
 export type Dims = readonly number[];
@@ -47,6 +47,8 @@ export class NDView<T extends DataType, D extends Dims> {
   private s: number[];
   // offset
   private o: number;
+  // internals (to escape proxy)
+  private [ndvInternals]: this;
 
   /** @internal */
   constructor(src: FlatArray<T>, dims: D, stride: number[], offset: number) {
@@ -54,6 +56,7 @@ export class NDView<T extends DataType, D extends Dims> {
     this.d = dims;
     this.s = stride;
     this.o = offset;
+    this[ndvInternals] = this;
 
     const get = (target: this, key: string | symbol, unbox?: 1) => {
       if (key == ndvInternals) return target;
@@ -275,10 +278,6 @@ export class NDView<T extends DataType, D extends Dims> {
     });
   }
 
-  private get [ndvInternals]() {
-    return this;
-  }
-
   // calculate offset
   private c(ind: number[]) {
     let offset = this.o;
@@ -460,30 +459,31 @@ export class NDView<T extends DataType, D extends Dims> {
    *          buffer as the ndarray
    */
   toRaw(): DataTypeBuffer<T> {
-    switch (this.t.t) {
-      case DataType.String:
+    const raveled = this.ravel();
+    switch (this.t.t) {        
       case DataType.Any:
-        return this.flatten().t.b;
-      case DataType.Bool: {
-        const raveled = this.ravel() as NDView<DataType.Bool>;
+        return (raveled.o || raveled.size != raveled.t.b.length
+          ? (raveled.t.b as unknown[]).slice(raveled.o, raveled.o + raveled.size)
+          : raveled.t.b
+        ) as DataTypeBuffer<T>;
+      case DataType.String:
+        return (raveled.o || raveled.size != raveled.t.b.length
+          ? new StringArray((raveled.t.b as StringArray).buffer.slice(raveled.o, raveled.o + raveled.size))
+          : raveled.t.b) as DataTypeBuffer<T>;
+      case DataType.Bool:
         return new Bitset(
-          raveled.t.b.buffer,
+          (raveled.t.b as Bitset).buffer,
           raveled.size,
-          raveled.o + raveled.t.b.offset
+          raveled.o + (raveled.t.b as Bitset).offset
         ) as DataTypeBuffer<T>;
-      }
-      case DataType.Complex: {
-        const raveled = this.ravel() as NDView<DataType.Complex>;
+      case DataType.Complex:
         return new ComplexArray(
-          raveled.t.b.buffer.subarray(raveled.o << 1, (raveled.o + raveled.size) << 1)
+          (raveled.t.b as ComplexArray).buffer.subarray(raveled.o << 1, (raveled.o + raveled.size) << 1)
         ) as DataTypeBuffer<T>;
-      }
-      default: {
-        const raveled = this.ravel();
+      default:
         return (raveled.t.b as DataTypeBuffer<
           Exclude<DataType, DataType.Any | DataType.String | DataType.Bool | DataType.Complex>
         >).subarray(raveled.o, raveled.size) as DataTypeBuffer<T>;
-      }
     }
   }
 
