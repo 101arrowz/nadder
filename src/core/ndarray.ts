@@ -17,6 +17,12 @@ type NDViewChild<T extends DataType, D extends Dims> =
         : NDView<T, NextD extends Dims ? NextD : never>
       : IndexType<T> | NDView<T, Dims>;
 
+type NDViewList<T extends DataType, D extends Dims> =
+  D extends readonly []
+  ? IndexType<T>
+  : D extends readonly [number, ...infer NextD]
+    ? NDViewList<T, NextD extends Dims ? NextD : never>[]
+    : IndexType<T> | NDViewList<T, Dims>[];
 
 // zero width space - we'll use it for some fun hacks :P
 const zws = String.fromCharCode(0x200B);
@@ -485,6 +491,29 @@ export class NDView<T extends DataType, D extends Dims> {
           Exclude<DataType, DataType.Any | DataType.String | DataType.Bool | DataType.Complex>
         >).subarray(raveled.o, raveled.size) as DataTypeBuffer<T>;
     }
+  }
+  
+  /**
+   * Converts the ndarray into a nested native array
+   * @returns The ndarray represented as a multidimensional Array object
+   */
+  toList(): NDViewList<T, D> {
+    const target = this[ndvInternals];
+    const list = (dim: number, ind: number) => {
+      if (dim == target.d.length) return target.t.b[ind];
+      const s = target.s[dim], d = target.d[dim];
+      let outs = [];
+      for (let i = 0; i < d; ++i) {
+        outs.push(list(dim + 1, ind));
+        ind += s;
+      }
+      return outs;
+    }
+    return list(0, target.o) as NDViewList<T, D>;
+  }
+
+  private toJSON() {
+    return this.toList();
   }
 
   [Symbol.for('nodejs.util.inspect.custom')](_: number, opts: { showProxy: boolean }) {

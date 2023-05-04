@@ -53,30 +53,30 @@ import { parse, argument, arange } from 'nadder';
 const calcTrace = parse`
   mat = ${argument('matrix')}.astype(float64);
   n = mat.shape[0];
-  trace = 1;
+  trace = 0;
 
   if ${process.env.DEBUG} {
     ${console.log}(mat);
   }
 
   for i in arange(n) {
-    trace *= mat[i, i];
+    trace += mat[i, i];
   }
 
   # Last line with no semicolon is the return value
   trace
 `;
 
-// 27
+// 13
 const example = calcTrace({
   matrix: array([
-    [1,4,5],
-    [2,3,6],
-    [7,1,9]
+    [1, 4, 5],
+    [2, 3, 6],
+    [7, 1, 9]
   ])
 });
 
-// [100776., 216216., 347256., 494856., 660000.]
+// [154., 158., 162., 166., 170.]
 const multiElem = calcTrace({
   matrix: arange(1, 81).reshape(4, 4, 5)
 });
